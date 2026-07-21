@@ -4,7 +4,7 @@ set -euo pipefail
 
 base_url="${1:-https://ads-mcp.growmyads.com}"
 
-curl --fail --silent --show-error "${base_url}/healthz" | \
+curl --fail --silent --show-error "${base_url}/health" | \
   python3 -m json.tool
 
 curl --fail --silent --show-error \

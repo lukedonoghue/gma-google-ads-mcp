@@ -34,7 +34,7 @@ import os
 from starlette.responses import JSONResponse
 
 
-@mcp.custom_route("/healthz", methods=["GET"])
+@mcp.custom_route("/health", methods=["GET"])
 async def health_check(_request):
     """Unauthenticated liveness endpoint for Cloud Run."""
 

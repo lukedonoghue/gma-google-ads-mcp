@@ -7,7 +7,7 @@ the upstream sample deployment:
 - encrypted Firestore persistence for OAuth clients and refresh tokens;
 - a stable JWT signing key from Secret Manager;
 - stateless HTTP operation so Cloud Run instances can scale safely;
-- an unauthenticated health endpoint but OAuth protection on `/mcp`;
+- an unauthenticated `/health` endpoint but OAuth protection on `/mcp`;
 - a 1,000-row report cap and no full GAQL/customer IDs in logs;
 - optional per-request manager (`login_customer_id`) context; and
 - an enforced PPC Navigator manager boundary for the hosted GMA deployment;

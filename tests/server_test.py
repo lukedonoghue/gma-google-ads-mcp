@@ -29,3 +29,11 @@ class TestUtils(unittest.TestCase):
         from ads_mcp import server
 
         self.assertIsNotNone(server.mcp, "MCP server instance not initialized")
+
+    def test_health_route_uses_cloud_run_safe_path(self):
+        """The health URL must not use Cloud Run's reserved *z suffix."""
+        from ads_mcp import server
+
+        route_paths = {route.path for route in server.mcp._additional_http_routes}
+        self.assertIn("/health", route_paths)
+        self.assertNotIn("/healthz", route_paths)
