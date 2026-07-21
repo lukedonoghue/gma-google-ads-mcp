@@ -1,12 +1,13 @@
 [project]
 name = "google-ads-mcp"
-version = "0.0.1"
+version = "0.1.0"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 dependencies = [
-    "google-ads>=31.0.0",
-    "mcp[cli]>=1.2.0",
-    "fastmcp>=3.2.0"
+    "google-ads==31.1.0",
+    "google-cloud-firestore==2.21.0",
+    "mcp[cli]==1.28.1",
+    "fastmcp==3.4.4"
 ]
 
 description = "MCP Server for Google Ads, depends on Google Ads API."
@@ -33,3 +34,6 @@ issues = "https://github.com/googleads/google-ads-mcp/issues"
 [project.scripts]
 google-ads-mcp = "ads_mcp.server:run_server"
 google-ads-mcp-update-gaql = "ads_mcp.update_references:update_gaql_resource_file"
+
+[tool.setuptools.packages.find]
+include = ["ads_mcp*"]

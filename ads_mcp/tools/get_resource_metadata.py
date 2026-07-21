@@ -19,7 +19,7 @@ from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 import ads_mcp.utils as utils
 
-metadata_mcp = FastMCP("metadata")
+metadata_mcp = FastMCP("metadata", mask_error_details=True)
 
 
 @metadata_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
@@ -51,9 +51,7 @@ def get_resource_metadata(resource_name: str) -> Dict[str, Any]:
     attributes_query = f"SELECT name, selectable, filterable, sortable WHERE name LIKE '{resource_name}.%' AND category = 'ATTRIBUTE'"
     request.query = attributes_query
     try:
-        attributes_response = ga_service.search_google_ads_fields(
-            request=request
-        )
+        attributes_response = ga_service.search_google_ads_fields(request=request)
         for field in attributes_response:
             if field.selectable:
                 selectable.add(field.name)
@@ -67,9 +65,7 @@ def get_resource_metadata(resource_name: str) -> Dict[str, Any]:
         fallback_query = f"SELECT name, selectable, filterable, sortable WHERE name LIKE '{resource_name}.%'"
         request.query = fallback_query
         try:
-            attributes_response = ga_service.search_google_ads_fields(
-                request=request
-            )
+            attributes_response = ga_service.search_google_ads_fields(request=request)
             for field in attributes_response:
                 if field.name.startswith(f"{resource_name}."):
                     if field.selectable:
@@ -80,17 +76,13 @@ def get_resource_metadata(resource_name: str) -> Dict[str, Any]:
                         sortable.add(field.name)
         except Exception as e2:
             utils.logger.error(f"Fallback attributes query failed: {e2}")
-            raise RuntimeError(
-                f"API call to search_google_ads_fields failed: {e2}"
-            )
+            raise RuntimeError(f"API call to search_google_ads_fields failed: {e2}")
 
     # Query 2: Get selectable metrics and segments
     metrics_segments_query = f"SELECT name, selectable, filterable, sortable WHERE selectable_with CONTAINS ANY('{resource_name}')"
     request.query = metrics_segments_query
     try:
-        metrics_segments_response = ga_service.search_google_ads_fields(
-            request=request
-        )
+        metrics_segments_response = ga_service.search_google_ads_fields(request=request)
         for field in metrics_segments_response:
             if field.selectable:
                 selectable.add(field.name)

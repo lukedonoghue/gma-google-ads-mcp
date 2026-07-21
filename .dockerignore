@@ -1,0 +1,11 @@
+.git
+.gitignore
+.venv
+**/__pycache__
+**/*.pyc
+.env
+.env.*
+tests
+deploy
+client_secret*.json
+application_default_credentials.json

@@ -24,19 +24,24 @@ from google.ads.googleads.v24.services.types.customer_service import (
     ListAccessibleCustomersResponse,
 )
 
-customers_mcp = FastMCP("customers")
+customers_mcp = FastMCP("customers", mask_error_details=True)
 
 
 @customers_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def list_accessible_customers() -> List[str]:
     """Returns ids of customers directly accessible by the user authenticating the call.
 
-    Use this tool first to discover available customer IDs if the user hasn't
-    provided one. Most other tools require a valid customer ID as input.
+    A hosted connector with an enforced manager boundary returns only that
+    manager ID. Query its `customer_client` resource to discover child accounts.
+    Otherwise, this returns the customer IDs directly accessible by the user.
 
     Returns:
         List[str]: A list of customer IDs.
     """
+    enforced_login_customer_id = utils.get_enforced_login_customer_id()
+    if enforced_login_customer_id:
+        return [enforced_login_customer_id]
+
     ga_service = utils.get_googleads_service("CustomerService")
     accessible_customers: ListAccessibleCustomersResponse = (
         ga_service.list_accessible_customers()

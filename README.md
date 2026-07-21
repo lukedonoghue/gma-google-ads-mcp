@@ -1,5 +1,11 @@
 # Google Ads MCP Server
 
+> **Grow My Ads hosted fork:** the upstream Google tools remain read-only. This
+> fork adds production Cloud Run OAuth persistence, Secret Manager deployment,
+> manager-account context, bounded queries, and privacy-safe logging for the GMA
+> 13 Skills product. See [DEPLOYMENT.md](DEPLOYMENT.md). The upstream project is
+> `googleads/google-ads-mcp`.
+
 This repo contains the source code for running an
 [MCP](https://modelcontextprotocol.io) server that interacts with the
 [Google Ads API](https://developers.google.com/google-ads/api).

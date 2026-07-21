@@ -15,6 +15,7 @@
 """Test cases for the utils module."""
 
 import unittest
+from unittest.mock import patch
 from google.ads.googleads.v24.enums.types.campaign_status import (
     CampaignStatusEnum,
 )
@@ -31,9 +32,7 @@ class TestUtils(unittest.TestCase):
         """Tests that output values are formatted correctly."""
 
         self.assertEqual(
-            utils.format_output_value(
-                CampaignStatusEnum.CampaignStatus.ENABLED
-            ),
+            utils.format_output_value(CampaignStatusEnum.CampaignStatus.ENABLED),
             "ENABLED",
         )
 
@@ -84,9 +83,7 @@ class TestUtils(unittest.TestCase):
             with prevent_stdio_inheritance():
                 subprocess.Popen(["mock_cmd"])
 
-        mock_popen.assert_called_once_with(
-            ["mock_cmd"], stdin=subprocess.DEVNULL
-        )
+        mock_popen.assert_called_once_with(["mock_cmd"], stdin=subprocess.DEVNULL)
 
     def test_prevent_stdio_inheritance_explicit_stdin(self):
         """Tests that prevent_stdio_inheritance preserves explicit stdin."""
@@ -100,3 +97,47 @@ class TestUtils(unittest.TestCase):
                 subprocess.Popen(["mock_cmd"], stdin=subprocess.PIPE)
 
         mock_popen.assert_called_once_with(["mock_cmd"], stdin=subprocess.PIPE)
+
+    def test_explicit_login_customer_id_is_normalized(self):
+        """A per-request MCC ID overrides the optional global fallback."""
+        from unittest.mock import MagicMock, patch
+
+        credentials = MagicMock()
+        with patch("ads_mcp.utils._create_credentials", return_value=credentials):
+            with patch("ads_mcp.utils._get_developer_token", return_value="token"):
+                with patch("ads_mcp.utils.GoogleAdsClient") as client_class:
+                    utils._get_googleads_client(login_customer_id="987-654-3210")
+
+        client_class.assert_called_once_with(
+            credentials=credentials,
+            developer_token="token",
+            use_proto_plus=True,
+            login_customer_id="9876543210",
+        )
+
+    def test_enforced_login_customer_id_is_used(self):
+        """The hosted MCC boundary supplies the manager context."""
+        with patch.dict(
+            "os.environ",
+            {"GMA_MCP_ENFORCED_LOGIN_CUSTOMER_ID": "207-327-4070"},
+        ):
+            self.assertEqual(
+                utils.resolve_login_customer_id(),
+                "2073274070",
+            )
+            self.assertEqual(
+                utils.resolve_login_customer_id("2073274070"),
+                "2073274070",
+            )
+
+    def test_enforced_login_customer_id_rejects_other_manager(self):
+        """A caller cannot escape to the parent or a sibling MCC."""
+        with patch.dict(
+            "os.environ",
+            {"GMA_MCP_ENFORCED_LOGIN_CUSTOMER_ID": "2073274070"},
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "restricted by this hosted connector",
+            ):
+                utils.resolve_login_customer_id("5294823448")

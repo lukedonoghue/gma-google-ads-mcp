@@ -86,9 +86,7 @@ def _get_developer_token() -> str:
     """Returns the developer token from the environment variable GOOGLE_ADS_DEVELOPER_TOKEN."""
     dev_token = os.environ.get("GOOGLE_ADS_DEVELOPER_TOKEN")
     if dev_token is None:
-        raise ValueError(
-            "GOOGLE_ADS_DEVELOPER_TOKEN environment variable not set."
-        )
+        raise ValueError("GOOGLE_ADS_DEVELOPER_TOKEN environment variable not set.")
     return dev_token
 
 
@@ -97,15 +95,68 @@ def _get_login_customer_id() -> str | None:
     return os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID")
 
 
-def _get_googleads_client() -> GoogleAdsClient:
+def _normalize_customer_id(value: str, setting_name: str) -> str:
+    """Normalize and validate a Google Ads customer ID."""
+    normalized = value.strip().replace("-", "")
+    if len(normalized) != 10 or not normalized.isdigit():
+        raise ValueError(f"{setting_name} must be a 10-digit Google Ads customer ID")
+    return normalized
+
+
+def get_enforced_login_customer_id() -> str | None:
+    """Return the server-enforced manager boundary, when configured."""
+    value = os.environ.get("GMA_MCP_ENFORCED_LOGIN_CUSTOMER_ID")
+    if not value:
+        return None
+    return _normalize_customer_id(
+        value,
+        "GMA_MCP_ENFORCED_LOGIN_CUSTOMER_ID",
+    )
+
+
+def resolve_login_customer_id(
+    requested_login_customer_id: str | None = None,
+) -> str | None:
+    """Resolve an MCC ID without allowing a request to escape its boundary."""
+    enforced = get_enforced_login_customer_id()
+    requested = (
+        _normalize_customer_id(
+            requested_login_customer_id,
+            "login_customer_id",
+        )
+        if requested_login_customer_id
+        else None
+    )
+
+    if enforced:
+        if requested and requested != enforced:
+            raise ValueError("login_customer_id is restricted by this hosted connector")
+        return enforced
+
+    fallback = _get_login_customer_id()
+    if requested:
+        return requested
+    if fallback:
+        return _normalize_customer_id(
+            fallback,
+            "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
+        )
+    return None
+
+
+def _get_googleads_client(
+    login_customer_id: str | None = None,
+) -> GoogleAdsClient:
     args = {
         "credentials": _create_credentials(),
         "developer_token": _get_developer_token(),
         "use_proto_plus": True,
     }
 
-    # If the login-customer-id is not set, avoid setting None.
-    login_customer_id = _get_login_customer_id()
+    # If the login-customer-id is not set, avoid setting None. A hosted
+    # deployment can enforce one MCC so callers cannot move to a parent or
+    # sibling manager even when the OAuth user has broader access.
+    login_customer_id = resolve_login_customer_id(login_customer_id)
 
     if login_customer_id:
         args["login_customer_id"] = login_customer_id
@@ -115,8 +166,11 @@ def _get_googleads_client() -> GoogleAdsClient:
     return client
 
 
-def get_googleads_service(serviceName: str) -> GoogleAdsServiceClient:
-    return _get_googleads_client().get_service(
+def get_googleads_service(
+    serviceName: str,
+    login_customer_id: str | None = None,
+) -> GoogleAdsServiceClient:
+    return _get_googleads_client(login_customer_id=login_customer_id).get_service(
         serviceName, interceptors=[MCPHeaderInterceptor()]
     )
 
@@ -125,8 +179,8 @@ def get_googleads_type(typeName: str):
     return _get_googleads_client().get_type(typeName)
 
 
-def get_googleads_client():
-    return _get_googleads_client()
+def get_googleads_client(login_customer_id: str | None = None):
+    return _get_googleads_client(login_customer_id=login_customer_id)
 
 
 def format_output_value(value: Any) -> Any:
@@ -144,8 +198,7 @@ def format_output_value(value: Any) -> Any:
 
 def format_output_row(row: proto.Message, attributes):
     return {
-        attr: format_output_value(get_nested_attr(row, attr))
-        for attr in attributes
+        attr: format_output_value(get_nested_attr(row, attr)) for attr in attributes
     }
 
 

@@ -31,6 +31,23 @@ from ads_mcp.resources import (
 
 import os
 
+from starlette.responses import JSONResponse
+
+
+@mcp.custom_route("/healthz", methods=["GET"])
+async def health_check(_request):
+    """Unauthenticated liveness endpoint for Cloud Run."""
+
+    return JSONResponse(
+        {
+            "status": "ok",
+            "service": "gma-google-ads-mcp",
+            "mode": (
+                "oauth" if os.environ.get("GOOGLE_ADS_MCP_OAUTH_CLIENT_ID") else "stdio"
+            ),
+        }
+    )
+
 
 def run_server() -> None:
     _CLIENT_ID = os.environ.get("GOOGLE_ADS_MCP_OAUTH_CLIENT_ID")
@@ -42,6 +59,7 @@ def run_server() -> None:
             transport="streamable-http",
             port=port,
             host="0.0.0.0",
+            stateless_http=True,
             uvicorn_config={"access_log": False},
         )
     else:

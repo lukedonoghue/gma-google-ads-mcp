@@ -21,25 +21,33 @@ of the server.
 
 import os
 from fastmcp import FastMCP
-from fastmcp.server.auth.providers.google import GoogleProvider
+
+from ads_mcp.hosted_config import build_google_provider
 
 _CLIENT_ID = os.environ.get("GOOGLE_ADS_MCP_OAUTH_CLIENT_ID")
 _CLIENT_SECRET = os.environ.get("GOOGLE_ADS_MCP_OAUTH_CLIENT_SECRET")
-_BASE_URL = os.environ.get("GOOGLE_ADS_MCP_BASE_URL", "http://localhost:8080")
+
+if bool(_CLIENT_ID) != bool(_CLIENT_SECRET):
+    raise RuntimeError(
+        "GOOGLE_ADS_MCP_OAUTH_CLIENT_ID and "
+        "GOOGLE_ADS_MCP_OAUTH_CLIENT_SECRET must be set together"
+    )
 
 if _CLIENT_ID and _CLIENT_SECRET:
-    auth = GoogleProvider(
+    auth = build_google_provider(
         client_id=_CLIENT_ID,
         client_secret=_CLIENT_SECRET,
-        base_url=_BASE_URL,
-        required_scopes=[
-            "openid",
-            "https://www.googleapis.com/auth/userinfo.email",
-            "https://www.googleapis.com/auth/userinfo.profile",
-            "https://www.googleapis.com/auth/adwords",
-        ],
     )
-    mcp = FastMCP("Google Ads Server", auth=auth)
+    mcp = FastMCP(
+        "Grow My Ads Google Ads",
+        instructions=(
+            "Read-only Google Ads reporting. This server exposes no mutation "
+            "or account-change tools."
+        ),
+        website_url="https://growmyads.com",
+        auth=auth,
+        mask_error_details=True,
+    )
 else:
     mcp = FastMCP("Google Ads Server")
 

@@ -22,7 +22,8 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-uv.lock
+# Production images are built from the committed dependency lock.
+!uv.lock
 MANIFEST
 
 # Unit test / coverage reports
@@ -37,3 +38,12 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 .nox/
+.venv/
+
+# Local deployment settings and credentials
+.env
+.env.*
+!.env.example
+deploy/local.env
+client_secret*.json
+application_default_credentials.json

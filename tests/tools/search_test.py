@@ -98,6 +98,102 @@ class TestSearch(unittest.TestCase):
                     mock_log_error.assert_called_once()
 
     @patch("ads_mcp.utils.get_googleads_service")
+    def test_search_applies_default_safety_limit(self, mock_get_service):
+        """An omitted limit must never create an unbounded hosted query."""
+        mock_service = MagicMock()
+        mock_service.search_stream.return_value = []
+        mock_get_service.return_value = mock_service
+
+        search.search(
+            customer_id="1234567890",
+            fields=["campaign.id"],
+            resource="campaign",
+        )
+
+        query = mock_service.search_stream.call_args.kwargs["query"]
+        self.assertIn(" LIMIT 1000 ", query)
+
+    @patch("ads_mcp.utils.get_googleads_service")
+    def test_search_rejects_limit_over_safety_cap(self, mock_get_service):
+        """The public service must not accept arbitrarily large reports."""
+        from fastmcp.exceptions import ToolError
+
+        with self.assertRaises(ToolError):
+            search.search(
+                customer_id="1234567890",
+                fields=["campaign.id"],
+                resource="campaign",
+                limit=1001,
+            )
+        mock_get_service.assert_not_called()
+
+    @patch("ads_mcp.utils.get_googleads_service")
+    def test_search_passes_manager_login_customer_id(self, mock_get_service):
+        """MCC-only users can query an explicitly selected child account."""
+        mock_service = MagicMock()
+        mock_service.search_stream.return_value = []
+        mock_get_service.return_value = mock_service
+
+        search.search(
+            customer_id="1234567890",
+            fields=["campaign.id"],
+            resource="campaign",
+            limit=10,
+            login_customer_id="987-654-3210",
+        )
+
+        mock_get_service.assert_called_once_with(
+            "GoogleAdsService",
+            login_customer_id="9876543210",
+        )
+
+    @patch("ads_mcp.utils.get_googleads_service")
+    def test_search_uses_enforced_manager_when_omitted(self, mock_get_service):
+        """Hosted queries always carry the configured sub-MCC boundary."""
+        mock_service = MagicMock()
+        mock_service.search_stream.return_value = []
+        mock_get_service.return_value = mock_service
+
+        with patch.dict(
+            "os.environ",
+            {"GMA_MCP_ENFORCED_LOGIN_CUSTOMER_ID": "2073274070"},
+        ):
+            search.search(
+                customer_id="1234567890",
+                fields=["campaign.id"],
+                resource="campaign",
+                limit=10,
+            )
+
+        mock_get_service.assert_called_once_with(
+            "GoogleAdsService",
+            login_customer_id="2073274070",
+        )
+
+    @patch("ads_mcp.utils.get_googleads_service")
+    def test_search_rejects_manager_outside_boundary(self, mock_get_service):
+        """A request cannot substitute the parent MCC."""
+        from fastmcp.exceptions import ToolError
+
+        with patch.dict(
+            "os.environ",
+            {"GMA_MCP_ENFORCED_LOGIN_CUSTOMER_ID": "2073274070"},
+        ):
+            with self.assertRaisesRegex(
+                ToolError,
+                "restricted by this hosted connector",
+            ):
+                search.search(
+                    customer_id="1234567890",
+                    fields=["campaign.id"],
+                    resource="campaign",
+                    limit=10,
+                    login_customer_id="5294823448",
+                )
+
+        mock_get_service.assert_not_called()
+
+    @patch("ads_mcp.utils.get_googleads_service")
     def test_search_google_ads_exception(self, mock_get_service):
         """Tests that search handles GoogleAdsException and returns an error dict."""
         from google.ads.googleads.errors import GoogleAdsException
@@ -112,9 +208,7 @@ class TestSearch(unittest.TestCase):
         mock_failure.errors = [mock_error]
 
         # Instantiate real exception with dummy args
-        mock_ex = GoogleAdsException(
-            MagicMock(), MagicMock(), MagicMock(), MagicMock()
-        )
+        mock_ex = GoogleAdsException(MagicMock(), MagicMock(), MagicMock(), MagicMock())
         mock_ex.failure = mock_failure
         mock_ex.request_id = "req-123"
 

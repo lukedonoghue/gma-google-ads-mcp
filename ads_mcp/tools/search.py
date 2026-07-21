@@ -14,12 +14,13 @@
 
 """Tools for exposing the API Search method to the MCP server."""
 
+import os
 from typing import Any, Dict, List
 from fastmcp import FastMCP
 from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 
-search_mcp = FastMCP("search")
+search_mcp = FastMCP("search", mask_error_details=True)
 
 import ads_mcp.utils as utils
 from google.ads.googleads.errors import GoogleAdsException
@@ -33,6 +34,7 @@ def search(
     conditions: List[str] = [],
     orderings: List[str] = [],
     limit: int | None = None,
+    login_customer_id: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Fetches data from the Google Ads API using the search method
 
@@ -43,10 +45,33 @@ def search(
         conditions: List of conditions to filter the data, combined using AND clauses
         orderings: How the data is ordered
         limit: The maximum number of rows to return
+        login_customer_id: Optional manager (MCC) customer ID used to access a
+            child account. Supply it only when the selected account is reached
+            through that manager.
 
     """
 
-    ga_service = utils.get_googleads_service("GoogleAdsService")
+    max_rows = int(os.environ.get("GMA_MCP_SEARCH_MAX_ROWS", "1000"))
+    if max_rows <= 0:
+        raise ToolError("Server search row cap is misconfigured")
+    if limit is not None and limit <= 0:
+        raise ToolError("limit must be a positive integer")
+    if limit is not None and limit > max_rows:
+        raise ToolError(
+            f"Requested limit {limit} exceeds the server cap of {max_rows}. "
+            "Narrow the query or use a smaller limit."
+        )
+    effective_limit = limit or max_rows
+
+    try:
+        resolved_login_customer_id = utils.resolve_login_customer_id(login_customer_id)
+    except ValueError as error:
+        raise ToolError(str(error)) from error
+
+    ga_service = utils.get_googleads_service(
+        "GoogleAdsService",
+        login_customer_id=resolved_login_customer_id,
+    )
 
     query_parts = [f"SELECT {','.join(fields)} FROM {resource}"]
 
@@ -56,18 +81,22 @@ def search(
     if orderings:
         query_parts.append(f" ORDER BY {','.join(orderings)}")
 
-    if limit:
-        query_parts.append(f" LIMIT {limit}")
+    query_parts.append(f" LIMIT {effective_limit}")
 
     query_parts.append(" PARAMETERS omit_unselected_resource_names=true")
 
     query = "".join(query_parts)
-    utils.logger.info(f"ads_mcp.search query {query}")
+    # Log operational shape, never the full GAQL query or customer ID. Search
+    # conditions can contain customer-provided text and do not belong in logs.
+    utils.logger.info(
+        "ads_mcp.search resource=%s limit=%s manager_context=%s",
+        resource,
+        effective_limit,
+        bool(resolved_login_customer_id),
+    )
 
     try:
-        query_result = ga_service.search_stream(
-            customer_id=customer_id, query=query
-        )
+        query_result = ga_service.search_stream(customer_id=customer_id, query=query)
 
         final_output: List = []
         for batch in query_result:
@@ -78,12 +107,9 @@ def search(
         return final_output
     except GoogleAdsException as ex:
         error_msgs = [
-            f"Google Ads API Error: {error.message}"
-            for error in ex.failure.errors
+            f"Google Ads API Error: {error.message}" for error in ex.failure.errors
         ]
-        raise ToolError(
-            f"Request ID: {ex.request_id}\n" + "\n".join(error_msgs)
-        )
+        raise ToolError(f"Request ID: {ex.request_id}\n" + "\n".join(error_msgs))
 
 
 def _search_tool_description() -> str:
@@ -120,6 +146,13 @@ def _search_tool_description() -> str:
 
 ### Hints for limits
     Requests to resource change_event must specify a LIMIT of less than or equal to 10000
+    This hosted server applies a safety cap to every query (1000 rows by
+    default). Use the smallest decision-useful limit.
+
+### Hint for manager accounts
+    When the OAuth user reaches a child account only through a manager (MCC),
+    pass that manager ID as login_customer_id. A hosted deployment may lock
+    this value to one manager; omit it or pass the same configured manager.
 
 ### Hints for conversions questions
     https://developers.google.com/google-ads/api/docs/conversions/upload-summaries 
