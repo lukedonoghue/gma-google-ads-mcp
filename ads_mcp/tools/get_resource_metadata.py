@@ -14,6 +14,7 @@
 
 """Tools for fetching metadata for Google Ads resources."""
 
+import re
 from typing import Any, Dict
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -40,6 +41,9 @@ def get_resource_metadata(resource_name: str) -> Dict[str, Any]:
     Args:
         resource_name: The name of the Google Ads resource (e.g., 'campaign', 'ad_group').
     """
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", resource_name):
+        raise ValueError("resource_name must be a valid Google Ads resource name")
+
     ga_service = utils.get_googleads_service("GoogleAdsFieldService")
     request = utils.get_googleads_type("SearchGoogleAdsFieldsRequest")
 
@@ -47,54 +51,74 @@ def get_resource_metadata(resource_name: str) -> Dict[str, Any]:
     filterable = set()
     sortable = set()
 
-    # Query 1: Get resource attributes
-    attributes_query = f"SELECT name, selectable, filterable, sortable WHERE name LIKE '{resource_name}.%' AND category = 'ATTRIBUTE'"
-    request.query = attributes_query
-    try:
-        attributes_response = ga_service.search_google_ads_fields(request=request)
-        for field in attributes_response:
+    def add_fields(fields) -> None:
+        for field in fields:
             if field.selectable:
                 selectable.add(field.name)
             if field.filterable:
                 filterable.add(field.name)
             if field.sortable:
                 sortable.add(field.name)
-    except Exception as e:
-        utils.logger.warning(f"Failed attributes query: {e}")
-        # Fallback to original behavior if category filter fails
-        fallback_query = f"SELECT name, selectable, filterable, sortable WHERE name LIKE '{resource_name}.%'"
-        request.query = fallback_query
+
+    # First discover attributed resources. Their fields can be selected from
+    # the requested FROM resource without segmenting metrics, so omitting them
+    # would make the catalog materially incomplete.
+    request.query = (
+        "SELECT name, attribute_resources " f"WHERE name = '{resource_name}'"
+    )
+    try:
+        resource_response = ga_service.search_google_ads_fields(request=request)
+        resource = next(iter(resource_response), None)
+    except Exception as error:
+        raise RuntimeError(
+            f"API call to search_google_ads_fields failed: {error}"
+        ) from error
+
+    if resource is None:
+        raise ValueError(f"Unknown Google Ads resource: {resource_name}")
+
+    attribute_resources = sorted(set(resource.attribute_resources))
+    for attribute_resource in [resource_name, *attribute_resources]:
+        request.query = (
+            "SELECT name, selectable, filterable, sortable "
+            f"WHERE name LIKE '{attribute_resource}.%' "
+            "AND category = 'ATTRIBUTE'"
+        )
         try:
             attributes_response = ga_service.search_google_ads_fields(request=request)
-            for field in attributes_response:
-                if field.name.startswith(f"{resource_name}."):
-                    if field.selectable:
-                        selectable.add(field.name)
-                    if field.filterable:
-                        filterable.add(field.name)
-                    if field.sortable:
-                        sortable.add(field.name)
-        except Exception as e2:
-            utils.logger.error(f"Fallback attributes query failed: {e2}")
-            raise RuntimeError(f"API call to search_google_ads_fields failed: {e2}")
+            add_fields(attributes_response)
+        except Exception as error:
+            utils.logger.warning("Failed attributes query: %s", error)
+            request.query = (
+                "SELECT name, selectable, filterable, sortable "
+                f"WHERE name LIKE '{attribute_resource}.%'"
+            )
+            try:
+                attributes_response = ga_service.search_google_ads_fields(
+                    request=request
+                )
+                add_fields(
+                    field
+                    for field in attributes_response
+                    if field.name.startswith(f"{attribute_resource}.")
+                )
+            except Exception as fallback_error:
+                raise RuntimeError(
+                    "API call to search_google_ads_fields failed: " f"{fallback_error}"
+                ) from fallback_error
 
     # Query 2: Get selectable metrics and segments
     metrics_segments_query = f"SELECT name, selectable, filterable, sortable WHERE selectable_with CONTAINS ANY('{resource_name}')"
     request.query = metrics_segments_query
     try:
         metrics_segments_response = ga_service.search_google_ads_fields(request=request)
-        for field in metrics_segments_response:
-            if field.selectable:
-                selectable.add(field.name)
-            if field.filterable:
-                filterable.add(field.name)
-            if field.sortable:
-                sortable.add(field.name)
-    except Exception as e:
-        utils.logger.warning(f"Failed metrics/segments query: {e}")
+        add_fields(metrics_segments_response)
+    except Exception as error:
+        utils.logger.warning("Failed metrics/segments query: %s", error)
 
     return {
         "resource": resource_name,
+        "attribute_resources": attribute_resources,
         "selectable": sorted(list(selectable)),
         "filterable": sorted(list(filterable)),
         "sortable": sorted(list(sortable)),

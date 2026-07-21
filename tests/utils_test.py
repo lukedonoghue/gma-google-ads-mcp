@@ -141,3 +141,25 @@ class TestUtils(unittest.TestCase):
                 "restricted by this hosted connector",
             ):
                 utils.resolve_login_customer_id("5294823448")
+
+    def test_access_root_is_distinct_from_google_login_manager(self):
+        """Hosted data scope can be narrower than the OAuth user's login MCC."""
+        with patch.dict(
+            "os.environ",
+            {
+                "GMA_MCP_ENFORCED_LOGIN_CUSTOMER_ID": "529-482-3448",
+                "GMA_MCP_ACCESS_ROOT_CUSTOMER_ID": "207-327-4070",
+            },
+            clear=True,
+        ):
+            self.assertEqual(utils.resolve_login_customer_id(), "5294823448")
+            self.assertEqual(utils.get_access_root_customer_id(), "2073274070")
+            self.assertEqual(
+                utils.resolve_login_customer_id("2073274070"),
+                "5294823448",
+            )
+            with self.assertRaisesRegex(
+                ValueError,
+                "restricted by this hosted connector",
+            ):
+                utils.resolve_login_customer_id("1111111111")

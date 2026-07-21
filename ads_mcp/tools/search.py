@@ -64,6 +64,10 @@ def search(
     effective_limit = limit or max_rows
 
     try:
+        normalized_customer_id = utils._normalize_customer_id(
+            customer_id,
+            "customer_id",
+        )
         resolved_login_customer_id = utils.resolve_login_customer_id(login_customer_id)
     except ValueError as error:
         raise ToolError(str(error)) from error
@@ -96,7 +100,11 @@ def search(
     )
 
     try:
-        query_result = ga_service.search_stream(customer_id=customer_id, query=query)
+        utils.enforce_customer_access_root(ga_service, normalized_customer_id)
+        query_result = ga_service.search_stream(
+            customer_id=normalized_customer_id,
+            query=query,
+        )
 
         final_output: List = []
         for batch in query_result:
@@ -105,6 +113,8 @@ def search(
                     utils.format_output_row(row, batch.field_mask.paths)
                 )
         return final_output
+    except ValueError as error:
+        raise ToolError(str(error)) from error
     except GoogleAdsException as ex:
         error_msgs = [
             f"Google Ads API Error: {error.message}" for error in ex.failure.errors
@@ -151,8 +161,9 @@ def _search_tool_description() -> str:
 
 ### Hint for manager accounts
     When the OAuth user reaches a child account only through a manager (MCC),
-    pass that manager ID as login_customer_id. A hosted deployment may lock
-    this value to one manager; omit it or pass the same configured manager.
+    pass that manager ID as login_customer_id. A hosted deployment may route
+    through a fixed parent MCC while exposing only a narrower manager subtree;
+    omit this value or pass the manager returned by customer discovery.
 
 ### Hints for conversions questions
     https://developers.google.com/google-ads/api/docs/conversions/upload-summaries 

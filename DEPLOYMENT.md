@@ -9,8 +9,8 @@ the upstream sample deployment:
 - stateless HTTP operation so Cloud Run instances can scale safely;
 - an unauthenticated `/health` endpoint but OAuth protection on `/mcp`;
 - a 1,000-row report cap and no full GAQL/customer IDs in logs;
-- optional per-request manager (`login_customer_id`) context; and
-- an enforced PPC Navigator manager boundary for the hosted GMA deployment;
+- a server-enforced top-level Google Ads login manager;
+- an independent PPC Navigator subtree boundary for customer data;
 - pinned runtime dependencies.
 
 The server remains read-only. Its only tools are customer discovery, resource
@@ -96,15 +96,14 @@ pipes every value directly into Secret Manager. It writes no secret file.
 
 ```text
 ./deploy/deploy-cloud-run.sh YOUR_PROJECT_ID europe-west1 \
-  https://ads-mcp.growmyads.com 2073274070
+  https://ads-mcp.growmyads.com 5294823448 2073274070
 ```
 
 The deployment pins specific Secret Manager versions to the Cloud Run revision.
 The service is publicly reachable because MCP clients must reach its OAuth
-routes; application-level OAuth still protects the MCP tools. The final
-argument enforces PPC Navigator as the only `login_customer_id`; requests
-cannot substitute the parent Grow My Ads MCC even though the company developer
-token is owned there.
+routes; application-level OAuth still protects the MCP tools. Google Ads API
+calls route through the top-level Grow My Ads MCC, while customer discovery and
+every reporting query remain restricted to PPC Navigator and its descendants.
 
 ## 6. Map the domain
 

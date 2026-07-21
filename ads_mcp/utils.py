@@ -104,7 +104,7 @@ def _normalize_customer_id(value: str, setting_name: str) -> str:
 
 
 def get_enforced_login_customer_id() -> str | None:
-    """Return the server-enforced manager boundary, when configured."""
+    """Return the server-enforced Google Ads login manager, when configured."""
     value = os.environ.get("GMA_MCP_ENFORCED_LOGIN_CUSTOMER_ID")
     if not value:
         return None
@@ -114,11 +114,23 @@ def get_enforced_login_customer_id() -> str | None:
     )
 
 
+def get_access_root_customer_id() -> str | None:
+    """Return the narrowest manager subtree exposed by the hosted connector."""
+    value = os.environ.get("GMA_MCP_ACCESS_ROOT_CUSTOMER_ID")
+    if not value:
+        return None
+    return _normalize_customer_id(
+        value,
+        "GMA_MCP_ACCESS_ROOT_CUSTOMER_ID",
+    )
+
+
 def resolve_login_customer_id(
     requested_login_customer_id: str | None = None,
 ) -> str | None:
-    """Resolve an MCC ID without allowing a request to escape its boundary."""
+    """Resolve the fixed API login MCC without allowing caller substitution."""
     enforced = get_enforced_login_customer_id()
+    access_root = get_access_root_customer_id()
     requested = (
         _normalize_customer_id(
             requested_login_customer_id,
@@ -129,7 +141,13 @@ def resolve_login_customer_id(
     )
 
     if enforced:
-        if requested and requested != enforced:
+        allowed_requests = {enforced}
+        if access_root:
+            # Existing clients naturally pass the manager returned by customer
+            # discovery. Accept that logical root but still route Google Ads API
+            # calls through the server-controlled top-level login MCC.
+            allowed_requests.add(access_root)
+        if requested and requested not in allowed_requests:
             raise ValueError("login_customer_id is restricted by this hosted connector")
         return enforced
 
@@ -142,6 +160,35 @@ def resolve_login_customer_id(
             "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
         )
     return None
+
+
+def enforce_customer_access_root(
+    ga_service: GoogleAdsServiceClient,
+    customer_id: str,
+) -> str:
+    """Reject targets outside the configured manager subtree.
+
+    ``customer_client`` contains the configured manager itself plus all direct
+    and indirect descendants. The lookup uses the already-created service, so
+    its server-enforced login customer header remains in effect.
+    """
+    normalized_customer_id = _normalize_customer_id(customer_id, "customer_id")
+    access_root = get_access_root_customer_id()
+    if not access_root or normalized_customer_id == access_root:
+        return normalized_customer_id
+
+    query = (
+        "SELECT customer_client.id FROM customer_client "
+        "PARAMETERS omit_unselected_resource_names=true"
+    )
+    for batch in ga_service.search_stream(customer_id=access_root, query=query):
+        for row in batch.results:
+            if str(row.customer_client.id) == normalized_customer_id:
+                return normalized_customer_id
+
+    raise ValueError(
+        "customer_id is outside the configured Google Ads account boundary"
+    )
 
 
 def _get_googleads_client(

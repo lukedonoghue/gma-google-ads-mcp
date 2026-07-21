@@ -31,13 +31,18 @@ customers_mcp = FastMCP("customers", mask_error_details=True)
 def list_accessible_customers() -> List[str]:
     """Returns ids of customers directly accessible by the user authenticating the call.
 
-    A hosted connector with an enforced manager boundary returns only that
-    manager ID. Query its `customer_client` resource to discover child accounts.
+    A hosted connector with an access-root boundary returns only that manager
+    ID. Query its `customer_client` resource to discover child accounts. The
+    Google Ads API login manager may be a parent MCC and is never exposed here.
     Otherwise, this returns the customer IDs directly accessible by the user.
 
     Returns:
         List[str]: A list of customer IDs.
     """
+    access_root_customer_id = utils.get_access_root_customer_id()
+    if access_root_customer_id:
+        return [access_root_customer_id]
+
     enforced_login_customer_id = utils.get_enforced_login_customer_id()
     if enforced_login_customer_id:
         return [enforced_login_customer_id]

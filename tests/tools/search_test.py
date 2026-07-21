@@ -194,6 +194,78 @@ class TestSearch(unittest.TestCase):
         mock_get_service.assert_not_called()
 
     @patch("ads_mcp.utils.get_googleads_service")
+    def test_search_validates_child_beneath_separate_access_root(
+        self,
+        mock_get_service,
+    ):
+        """A parent login MCC may route only to the configured sub-MCC tree."""
+        mock_service = MagicMock()
+        validation_batch = MagicMock()
+        validation_row = MagicMock()
+        validation_row.customer_client.id = 1808980248
+        validation_batch.results = [validation_row]
+        mock_service.search_stream.side_effect = [[validation_batch], []]
+        mock_get_service.return_value = mock_service
+
+        with patch.dict(
+            "os.environ",
+            {
+                "GMA_MCP_ENFORCED_LOGIN_CUSTOMER_ID": "5294823448",
+                "GMA_MCP_ACCESS_ROOT_CUSTOMER_ID": "2073274070",
+            },
+            clear=True,
+        ):
+            search.search(
+                customer_id="1808980248",
+                fields=["campaign.id"],
+                resource="campaign",
+                limit=10,
+            )
+
+        mock_get_service.assert_called_once_with(
+            "GoogleAdsService",
+            login_customer_id="5294823448",
+        )
+        validation_call, report_call = mock_service.search_stream.call_args_list
+        self.assertEqual(validation_call.kwargs["customer_id"], "2073274070")
+        self.assertIn("customer_client.id", validation_call.kwargs["query"])
+        self.assertEqual(report_call.kwargs["customer_id"], "1808980248")
+
+    @patch("ads_mcp.utils.get_googleads_service")
+    def test_search_rejects_customer_outside_access_root(self, mock_get_service):
+        """A caller cannot query a parent or sibling account through the login MCC."""
+        from fastmcp.exceptions import ToolError
+
+        mock_service = MagicMock()
+        validation_batch = MagicMock()
+        validation_row = MagicMock()
+        validation_row.customer_client.id = 1808980248
+        validation_batch.results = [validation_row]
+        mock_service.search_stream.return_value = [validation_batch]
+        mock_get_service.return_value = mock_service
+
+        with patch.dict(
+            "os.environ",
+            {
+                "GMA_MCP_ENFORCED_LOGIN_CUSTOMER_ID": "5294823448",
+                "GMA_MCP_ACCESS_ROOT_CUSTOMER_ID": "2073274070",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(
+                ToolError,
+                "outside the configured Google Ads account boundary",
+            ):
+                search.search(
+                    customer_id="5294823448",
+                    fields=["campaign.id"],
+                    resource="campaign",
+                    limit=10,
+                )
+
+        mock_service.search_stream.assert_called_once()
+
+    @patch("ads_mcp.utils.get_googleads_service")
     def test_search_google_ads_exception(self, mock_get_service):
         """Tests that search handles GoogleAdsException and returns an error dict."""
         from google.ads.googleads.errors import GoogleAdsException
