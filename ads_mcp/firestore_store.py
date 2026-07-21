@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any, SupportsFloat
@@ -52,6 +53,14 @@ class FirestoreStore:
         return self._collection.document(self._document_id(key, collection))
 
     @staticmethod
+    def _decode_value(data: Mapping[str, Any]) -> dict[str, Any] | None:
+        value_json = data.get("value_json")
+        if not isinstance(value_json, str):
+            return None
+        value = json.loads(value_json)
+        return dict(value) if isinstance(value, Mapping) else None
+
+    @staticmethod
     def _expires_at(ttl: SupportsFloat | None) -> datetime | None:
         if ttl is None:
             return None
@@ -88,8 +97,7 @@ class FirestoreStore:
             await document.delete()
             return None
 
-        value = data.get("value")
-        return dict(value) if isinstance(value, Mapping) else None
+        return self._decode_value(data)
 
     async def ttl(
         self,
@@ -109,10 +117,10 @@ class FirestoreStore:
             await document.delete()
             return (None, None)
 
-        value = data.get("value")
-        if not isinstance(value, Mapping):
+        value = self._decode_value(data)
+        if value is None:
             return (None, None)
-        return (dict(value), remaining)
+        return (value, remaining)
 
     async def put(
         self,
@@ -127,7 +135,11 @@ class FirestoreStore:
             {
                 "namespace": namespace,
                 "key_hash": self._document_id(key, collection),
-                "value": dict(value),
+                # Firestore rejects nested field names wrapped in double
+                # underscores. FastMCP's encryption envelope deliberately uses
+                # names such as ``__encrypted_data__``, so store the opaque
+                # mapping as JSON rather than as a nested Firestore map.
+                "value_json": json.dumps(dict(value), separators=(",", ":")),
                 "expires_at": self._expires_at(ttl),
                 "updated_at": firestore.SERVER_TIMESTAMP,
             }

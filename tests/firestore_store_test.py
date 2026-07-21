@@ -79,6 +79,19 @@ class FirestoreStoreTest(unittest.IsolatedAsyncioTestCase):
             {"value": 2},
         )
 
+    async def test_reserved_field_names_are_stored_as_opaque_json(self):
+        value = {
+            "__encrypted_data__": "ciphertext",
+            "__encryption_version__": 1,
+        }
+
+        await self.store.put("encrypted", value)
+
+        stored_document = next(iter(self.client.documents.values()))
+        self.assertIn("value_json", stored_document)
+        self.assertNotIn("value", stored_document)
+        self.assertEqual(await self.store.get("encrypted"), value)
+
     async def test_expired_value_is_removed(self):
         await self.store.put("expired", {"value": 1}, ttl=0)
         self.assertIsNone(await self.store.get("expired"))
