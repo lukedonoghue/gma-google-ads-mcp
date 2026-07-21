@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "google-ads-mcp"
 version = "0.1.0"
@@ -23,7 +27,9 @@ classifiers = [
 [project.optional-dependencies]
 dev = [
     "black",
-    "nox >=2025.5.1, <2026"
+    "google-genai==2.12.1",
+    "nox >=2025.5.1, <2026",
+    "pytest==9.1.1"
 ]
 
 [project.urls]
