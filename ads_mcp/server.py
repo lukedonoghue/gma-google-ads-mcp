@@ -32,6 +32,7 @@ from ads_mcp.resources import (
 import os
 
 from starlette.responses import JSONResponse
+from ads_mcp.review_ui import register_review_routes
 
 
 @mcp.custom_route("/health", methods=["GET"])
@@ -47,6 +48,9 @@ async def health_check(_request):
             ),
         }
     )
+
+
+register_review_routes(mcp)
 
 
 def run_server() -> None:

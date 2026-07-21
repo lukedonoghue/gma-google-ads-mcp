@@ -5,8 +5,10 @@ from __future__ import annotations
 import unittest
 
 from cryptography.fernet import Fernet
+from google.api_core.exceptions import AlreadyExists
 from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
 
+from ads_mcp.changeset_store import FirestoreReplayGuard
 from ads_mcp.firestore_store import FirestoreStore
 
 
@@ -28,6 +30,11 @@ class FakeDocument:
         return FakeSnapshot(self._documents.get(self._document_id))
 
     async def set(self, value):
+        self._documents[self._document_id] = value
+
+    async def create(self, value):
+        if self._document_id in self._documents:
+            raise AlreadyExists("document exists")
         self._documents[self._document_id] = value
 
     async def delete(self):
@@ -126,6 +133,18 @@ class FirestoreStoreTest(unittest.IsolatedAsyncioTestCase):
             await encrypted_store.get("oauth-client"),
             {"refresh_token": "sensitive-refresh-token"},
         )
+
+    async def test_replay_guard_claim_is_atomic_and_stores_no_raw_token(self):
+        guard = FirestoreReplayGuard(
+            project_id="test-project",
+            database="(default)",
+            collection_name="replays",
+            client=self.client,
+        )
+
+        self.assertTrue(await guard.claim("approval-token-hash", ttl_seconds=60))
+        self.assertFalse(await guard.claim("approval-token-hash", ttl_seconds=60))
+        self.assertNotIn("approval-token-hash", repr(self.client.documents))
 
 
 if __name__ == "__main__":

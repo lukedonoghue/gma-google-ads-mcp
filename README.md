@@ -1,9 +1,10 @@
 # Google Ads MCP Server
 
-> **Grow My Ads hosted fork:** the upstream Google tools remain read-only. This
-> fork adds production Cloud Run OAuth persistence, Secret Manager deployment,
-> manager-account context, bounded queries, and privacy-safe logging for the GMA
-> 13 Skills product. See [DEPLOYMENT.md](DEPLOYMENT.md). The upstream project is
+> **Grow My Ads hosted fork:** reporting remains read-only. This fork adds
+> production Cloud Run OAuth persistence, manager-account boundaries, bounded
+> queries, and a separate controlled-change lifecycle for the GMA 13 Skills
+> product. Live mutations fail closed by default. See
+> [DEPLOYMENT.md](DEPLOYMENT.md). The upstream project is
 > `googleads/google-ads-mcp`.
 
 This repo contains the source code for running an
@@ -26,6 +27,22 @@ to provide several
   compatible metrics, and compatible segments.
 - `list_accessible_customers`: Returns ids of customers directly accessible
   by the user authenticating the call.
+- `changesets_capabilities`: Reports typed operation and server safety gates.
+- `changesets_create` / `changesets_get`: Store and retrieve bounded Change
+  Plans by OAuth identity without changing Google Ads.
+- `changesets_validate`: Re-reads current values, rejects drift, and calls the
+  Google Ads API with `validate_only=true` for exact selected actions.
+- `changesets_approve`: Requires explicit host interaction and binds a one-time
+  approval token to the exact operation hash.
+- `changesets_apply`: Requires another explicit host interaction and applies an
+  approved allowlisted batch atomically (`partial_failure=false`). Disabled by
+  default and restricted to explicit customer IDs when enabled.
+- `changesets_verify`: Reads affected resources back and attaches recent Change
+  Event evidence.
+
+There is deliberately no generic mutate tool. The initial allowlist is campaign
+pause, Search Partners on/off, Search Display Expansion on/off, and an exact
+existing campaign-budget amount. Scheduled runs are always analysis-only.
 
 ### Configuring and Namespacing Tools
 
@@ -54,6 +71,8 @@ namespaces:
     prefix: "metadata"
     enabled_tools:
       - get_resource_metadata: true
+
+  changesets: true
 ```
 
 

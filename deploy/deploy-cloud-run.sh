@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build a pinned image and deploy the read-only OAuth MCP service.
+# Build a pinned image and deploy OAuth MCP with live changes fail-closed.
 set -euo pipefail
 
 project_id="${1:?Usage: $0 PROJECT_ID [REGION] [PUBLIC_BASE_URL] [LOGIN_CUSTOMER_ID] [ACCESS_ROOT_CUSTOMER_ID]}"
@@ -71,7 +71,7 @@ gcloud run deploy "$service" \
   --timeout 300 \
   --min-instances 0 \
   --max-instances 5 \
-  --set-env-vars "GMA_MCP_ENV=production,GMA_MCP_OAUTH_STORAGE=firestore,GMA_MCP_SEARCH_MAX_ROWS=1000,GMA_MCP_ENFORCED_LOGIN_CUSTOMER_ID=${login_customer_id},GMA_MCP_ACCESS_ROOT_CUSTOMER_ID=${access_root_customer_id},GOOGLE_PROJECT_ID=${project_id},GOOGLE_ADS_MCP_BASE_URL=${public_base_url}" \
+  --set-env-vars "GMA_MCP_ENV=production,GMA_MCP_OAUTH_STORAGE=firestore,GMA_MCP_CHANGESET_STORAGE=firestore,GMA_MCP_SEARCH_MAX_ROWS=1000,GMA_ENABLE_CHANGESETS=1,GMA_ENABLE_CHANGESET_VALIDATION=0,GMA_ENABLE_MUTATIONS=0,GMA_ALLOW_LIVE_MUTATIONS=0,GMA_DEVELOPER_TOKEN_AD_MANAGEMENT_CONFIRMED=0,GMA_MCP_ENFORCED_LOGIN_CUSTOMER_ID=${login_customer_id},GMA_MCP_ACCESS_ROOT_CUSTOMER_ID=${access_root_customer_id},GOOGLE_PROJECT_ID=${project_id},GOOGLE_ADS_MCP_BASE_URL=${public_base_url}" \
   --set-secrets "GOOGLE_ADS_DEVELOPER_TOKEN=gma-google-ads-developer-token:${developer_token_version},GOOGLE_ADS_MCP_OAUTH_CLIENT_ID=gma-google-oauth-client-id:${oauth_client_id_version},GOOGLE_ADS_MCP_OAUTH_CLIENT_SECRET=gma-google-oauth-client-secret:${oauth_client_secret_version},GMA_MCP_JWT_SIGNING_KEY=gma-mcp-jwt-signing-key:${jwt_signing_key_version},GMA_MCP_STORAGE_ENCRYPTION_KEY=gma-mcp-storage-encryption-key:${storage_key_version}" \
   --labels "product=gma-13-skills,component=google-ads-mcp"
 

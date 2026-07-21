@@ -2,6 +2,238 @@
   "tools": [
     {
       "_meta": {
+        "anthropic/requiresUserInteraction": true,
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Atomically apply only an approved, unchanged, allowlisted changeset.\n\nLive apply fails closed unless every global, developer-token, per-customer,\nownership, expiry, validation, drift, hash, approval, and replay gate passes.\nScheduled runs can never call this successfully.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_token": {
+            "type": "string"
+          },
+          "changeset_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "changeset_id",
+          "approval_token"
+        ],
+        "type": "object"
+      },
+      "name": "changesets_apply",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "anthropic/requiresUserInteraction": true,
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Approve the exact validated selection and issue a one-time token.\n\nThe host must ask a human every time. The confirmation phrase and operation\nhash must match the validation response exactly. This stores approval but\ndoes not change Google Ads.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "changeset_id": {
+            "type": "string"
+          },
+          "confirmation": {
+            "type": "string"
+          },
+          "operation_hash": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "changeset_id",
+          "operation_hash",
+          "confirmation"
+        ],
+        "type": "object"
+      },
+      "name": "changesets_approve",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Return controlled-change feature flags and the typed operation allowlist.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "changesets_capabilities",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Persist a bounded GMA Change Plan without changing Google Ads.\n\nThe plan must include the confirmed Run Scope and action evidence. Only\nallowlisted typed operations may be marked applyable; every other finding\nmust be advisory, blocked, hold, or monitor.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "plan": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "plan"
+        ],
+        "type": "object"
+      },
+      "name": "changesets_create",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Retrieve one unexpired Change Plan owned by the current OAuth identity.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "changeset_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "changeset_id"
+        ],
+        "type": "object"
+      },
+      "name": "changesets_get",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Re-read selected current values and run Google validate_only.\n\nThis never changes Google Ads. It rejects scheduled runs, unsupported\nactions, account drift, and invalid API mutations. The returned operation\nhash identifies the exact validated selection that may be approved.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "changeset_id": {
+            "type": "string"
+          },
+          "selected_action_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "changeset_id",
+          "selected_action_ids"
+        ],
+        "type": "object"
+      },
+      "name": "changesets_validate",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Read affected resources back and attach recent Change Event evidence.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "changeset_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "changeset_id"
+        ],
+        "type": "object"
+      },
+      "name": "changesets_verify",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
         "fastmcp": {
           "tags": []
         }

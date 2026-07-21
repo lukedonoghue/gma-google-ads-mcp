@@ -41,8 +41,11 @@ if _CLIENT_ID and _CLIENT_SECRET:
     mcp = FastMCP(
         "Grow My Ads Google Ads",
         instructions=(
-            "Read-only Google Ads reporting. This server exposes no mutation "
-            "or account-change tools."
+            "Google Ads analysis plus controlled Change Plans. Reporting is "
+            "read-only. Never treat a recommendation as permission. Only typed "
+            "allowlisted changes may pass validate, exact selection, explicit "
+            "human approval, atomic apply, and readback verification. Scheduled "
+            "runs may analyze and create plans but can never apply changes."
         ),
         website_url="https://growmyads.com",
         auth=auth,

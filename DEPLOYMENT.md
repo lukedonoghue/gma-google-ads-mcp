@@ -1,8 +1,9 @@
 # Grow My Ads Hosted Connector Deployment
 
-This fork deploys Google's official read-only Google Ads MCP server to Cloud
-Run for the GMA 13 Skills product. It adds the production controls missing from
-the upstream sample deployment:
+This fork deploys Google's official Google Ads MCP server to Cloud Run for the
+GMA 13 Skills product. Reporting is read-only; a separate controlled-change
+surface is present but live mutations fail closed by default. It adds the
+production controls missing from the upstream sample deployment:
 
 - encrypted Firestore persistence for OAuth clients and refresh tokens;
 - a stable JWT signing key from Secret Manager;
@@ -11,10 +12,15 @@ the upstream sample deployment:
 - a 1,000-row report cap and no full GAQL/customer IDs in logs;
 - a server-enforced top-level Google Ads login manager;
 - an independent PPC Navigator subtree boundary for customer data;
-- pinned runtime dependencies.
+- pinned runtime dependencies;
+- encrypted, identity-isolated Change Plans with short expiry;
+- a typed operation allowlist, `validate_only`, current-value drift checks,
+  exact operation hashes, explicit human-interaction metadata, atomic apply,
+  one-time replay protection, and readback verification.
 
-The server remains read-only. Its only tools are customer discovery, resource
-metadata, and Google Ads reporting search. It has no mutation service.
+The server never exposes a generic mutation service. Production deployment
+starts with validation and live apply disabled. Enabling either requires the
+additional gates below; scheduled runs can never approve or apply.
 
 ## Decisions required before creating cloud resources
 
@@ -31,6 +37,10 @@ metadata, and Google Ads reporting search. It has no mutation service.
 4. **OAuth publishing status.** Private testing may use named test users. Public
    customers require the app in production and Google verification where
    required.
+5. **Write permission is a separate decision.** Standard API access does not
+   prove the token's permissible use includes **Ad creation / management**.
+   Keep `GMA_DEVELOPER_TOKEN_AD_MANAGEMENT_CONFIRMED=0` until API Center/the
+   approved-use record confirms it, and use a designated test customer first.
 
 ## 1. Install and authenticate Google Cloud CLI
 
@@ -58,7 +68,7 @@ In the chosen Google Cloud project:
    rows.
 4. Request `openid`, email/profile, and
    `https://www.googleapis.com/auth/adwords`. Google offers no narrower
-   read-only Ads scope; read-only is enforced by the tools this server exposes.
+   read-only Ads scope; GMA enforces the analysis/change boundary in its tools.
 5. Create an OAuth client of type **Web application**.
 6. Add this exact authorized redirect URI:
 
@@ -104,6 +114,24 @@ The service is publicly reachable because MCP clients must reach its OAuth
 routes; application-level OAuth still protects the MCP tools. Google Ads API
 calls route through the top-level Grow My Ads MCC, while customer discovery and
 every reporting query remain restricted to PPC Navigator and its descendants.
+Changesets use a separate encrypted Firestore collection and are additionally
+bound to the current OAuth identity and advertiser customer ID.
+
+The deployment script sets these fail-closed defaults:
+
+```text
+GMA_ENABLE_CHANGESETS=1
+GMA_ENABLE_CHANGESET_VALIDATION=0
+GMA_ENABLE_MUTATIONS=0
+GMA_ALLOW_LIVE_MUTATIONS=0
+GMA_DEVELOPER_TOKEN_AD_MANAGEMENT_CONFIRMED=0
+```
+
+Do not enable validation until the typed-operation tests pass against the
+designated test account. Do not enable live mutations until ad-management use
+is confirmed, explicit 10-digit test customer IDs are configured in
+`GMA_LIVE_MUTATION_CUSTOMER_IDS`, and both host approval paths pass. Never use
+an MCC ID as an apply target.
 
 ## 6. Map the domain
 
@@ -133,11 +161,12 @@ Balancer and Cloud Armor without changing the public MCP URL.
 This confirms the health route, OAuth discovery, and rejection of an
 unauthenticated MCP request. It does not touch an Ads account.
 
-Then connect from Codex and Claude Code, complete Google OAuth, and call only:
+Then connect from Codex and Claude Code, complete Google OAuth, and call:
 
 1. `list_accessible_customers`;
-2. one customer-name/settings query; and
-3. one small campaign query with a limit of 5.
+2. one customer-name/settings query;
+3. one small campaign query with a limit of 5; and
+4. `changesets_capabilities`, confirming validation and live mutations are false.
 
 Only after those pass should the 14-skill acceptance suite in the plugin's
 `LIVE-TEST.md` begin.
@@ -147,6 +176,8 @@ Only after those pass should the 14-skill acceptance suite in the plugin's
 - OAuth consent screen is production/verified; test-mode seven-day token expiry
   is not acceptable for customers.
 - A dedicated production-capable Ads developer token is in use.
+- The token's permissible use includes Ad creation / management before any
+  validation or live-mutation pilot.
 - Privacy policy and retention schedule cover encrypted OAuth tokens, Firestore,
   Secret Manager, and Cloud Logging.
 - Cloud Monitoring alerts cover 5xx errors, latency, instance failures, Ads API
@@ -157,3 +188,7 @@ Only after those pass should the 14-skill acceptance suite in the plugin's
 - Cloud Run spend and Google Ads API operations per skill run have been measured.
 - The external load balancer/Cloud Armor migration is completed before broad
   public distribution.
+- Cross-owner, expired, drifted, replayed, wrong-account, scheduled, and
+  partially valid changesets all fail closed in integration tests.
+- One reversible test-account change is validated, separately approved, applied,
+  read back, and visible in Change Event before any customer is allowlisted.
