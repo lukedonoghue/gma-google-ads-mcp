@@ -7,4 +7,5 @@ namespaces:
   customers: true
   search: true
   metadata: true
+  gma: true
   changesets: true

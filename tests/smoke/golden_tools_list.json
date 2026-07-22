@@ -17,16 +17,12 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
-          "approval_token": {
-            "type": "string"
-          },
           "changeset_id": {
             "type": "string"
           }
         },
         "required": [
-          "changeset_id",
-          "approval_token"
+          "changeset_id"
         ],
         "type": "object"
       },
@@ -49,14 +45,11 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Approve the exact validated selection and issue a one-time token.\n\nThe host must ask a human every time. The confirmation phrase and operation\nhash must match the validation response exactly. This stores approval but\ndoes not change Google Ads.",
+      "description": "Approve the exact validated selection after the host asks the user.\n\nThe host must ask a human every time. The operation hash must match the\nvalidation response exactly. This stores approval, returns no reusable\nsecret, and does not change Google Ads.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "changeset_id": {
-            "type": "string"
-          },
-          "confirmation": {
             "type": "string"
           },
           "operation_hash": {
@@ -65,8 +58,7 @@
         },
         "required": [
           "changeset_id",
-          "operation_hash",
-          "confirmation"
+          "operation_hash"
         ],
         "type": "object"
       },
@@ -262,6 +254,268 @@
         ],
         "type": "object",
         "x-fastmcp-wrap-result": true
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Return a persisted, owner-bound, schema-validated GMA run result.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "name": "gma_get_run",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "description": "List non-manager Google Ads advertisers inside the GMA account boundary.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "gma_list_accounts",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Check GMA connector identity, versions, account boundary, and safe capabilities.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "host_package_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      },
+      "name": "gma_preflight",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "description": "Return a confirmable advertiser scope plus type/status/trailing-30d spend.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "analysis_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "business_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "campaign_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "customer_id": {
+            "type": "string"
+          },
+          "login_customer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "type": "object"
+      },
+      "name": "gma_prepare_scope",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Render a canonical GMA run as a nontechnical Markdown report.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "name": "gma_render_run",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "description": "Run one registered GMA module and return a schema-validated result.\n\nThis creates a review-only Change Plan but never changes Google Ads. The\nhosted runtime owns queries, normalization, calculations, gates, IDs, and\napplyability. Claude or Codex owns only conversation and explanation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "business_inputs": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confirmed_scope_hash": {
+            "type": "string"
+          },
+          "module_id": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "module_id",
+          "scope_id",
+          "confirmed_scope_hash"
+        ],
+        "type": "object"
+      },
+      "name": "gma_run_skill",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
       }
     },
     {

@@ -42,7 +42,6 @@ def render_change_plan(
     plan: Mapping[str, Any],
     review_token: str,
     *,
-    approval_token: str | None = None,
     message: str | None = None,
 ) -> str:
     """Render the canonical plan table and expandable evidence cards."""
@@ -108,13 +107,10 @@ def render_change_plan(
         )
     elif status == "validated":
         form = (
-            '<div class="warning"><strong>Approval is not application.</strong> '
-            "This approves only the exact validated rows above. Claude or Codex "
-            "will still show a separate final apply prompt.</div>"
-            f'<form method="post" action="/changesets/{_escape(plan["id"])}/approve">'
-            f'<input type="hidden" name="token" value="{_escape(review_token)}">'
-            '<button class="approve" type="submit">Approve selected items</button>'
-            "</form>"
+            '<div class="warning"><strong>Ready for approval.</strong> Review the '
+            "exact rows above, then return to Claude or Codex and say “Approve "
+            "these selected changes.” The host will show a required confirmation. "
+            "Approval still does not apply anything.</div>"
         )
     elif (plan.get("review_selection") or {}).get(
         "status"
@@ -123,16 +119,6 @@ def render_change_plan(
             '<div class="next"><strong>Selection saved.</strong> Return to Claude '
             "or Codex and say: “Validate my selected GMA Change Plan.” Refresh this "
             "page after validation.</div>"
-        )
-
-    token_box = ""
-    if approval_token:
-        token_box = (
-            '<div class="token"><strong>Approved.</strong> Copy this one-time token '
-            "back to Claude or Codex for the final apply request. The host will ask "
-            "you once more before Google Ads can change."
-            f'<input value="{_escape(approval_token)}" readonly '
-            'aria-label="One-time approval token"></div>'
         )
 
     notice = f'<div class="notice">{_escape(message)}</div>' if message else ""
@@ -156,15 +142,14 @@ h1 {{ margin: 0 0 8px; }} .meta {{ color: #4b5563; margin-bottom: 20px; }} .stat
 .table-wrap {{ overflow-x: auto; }} table {{ border-collapse: collapse; width: 100%; font-size: 14px; }} th, td {{ border-bottom: 1px solid #e5e7eb; padding: 12px 10px; text-align: left; vertical-align: top; }} th {{ background: #f9fafb; position: sticky; top: 0; }}
 details {{ margin: 12px 0; padding: 12px 16px; border: 1px solid #e5e7eb; border-radius: 10px; }} summary {{ cursor: pointer; font-weight: 700; }}
 button {{ margin-top: 20px; border: 0; border-radius: 10px; padding: 12px 18px; font-weight: 800; background: #2563eb; color: white; cursor: pointer; }} button.approve {{ background: #047857; }}
-.warning, .next, .token, .notice {{ margin-top: 20px; padding: 14px 16px; border-radius: 10px; }} .warning {{ background: #fff7ed; }} .next {{ background: #eff6ff; }} .token {{ background: #ecfdf5; }} .notice {{ background: #fef3c7; }}
-.token input {{ display: block; width: min(760px, 95%); margin-top: 12px; padding: 10px; font-family: ui-monospace, monospace; }}
+.warning, .next, .notice {{ margin-top: 20px; padding: 14px 16px; border-radius: 10px; }} .warning {{ background: #fff7ed; }} .next {{ background: #eff6ff; }} .notice {{ background: #fef3c7; }}
 footer {{ margin-top: 28px; color: #6b7280; font-size: 13px; }}
 </style>
 </head>
 <body><main>
 <h1>GMA Change Plan</h1>
 <p class="meta"><span class="status">{_escape(_status_text(plan))}</span> · {_escape(plan.get('account_name'))} ({_escape(plan.get('customer_id'))}) · {_escape(plan.get('analysis_start'))} to {_escape(plan.get('analysis_end'))}<br>Campaigns: {_escape(campaign_names)} · Skills: {_escape(', '.join(plan.get('skills', [])))}</p>
-{notice}{token_box}
+{notice}
 <div class="table-wrap"><table>
 <thead><tr><th>Select</th><th>ID</th><th>Priority</th><th>Entity</th><th>Current → proposed</th><th>Reason</th><th>Evidence summary</th><th>Risk / status</th></tr></thead>
 <tbody>{''.join(rows)}</tbody></table></div>
@@ -213,26 +198,6 @@ def register_review_routes(mcp) -> None:
                     plan,
                     token,
                     message="Selection saved. Validation still happens in Claude or Codex.",
-                )
-            )
-        except ChangesetError as error:
-            return _error_response(str(error), 400)
-
-    @mcp.custom_route("/changesets/{changeset_id}/approve", methods=["POST"])
-    async def approve(request):
-        changeset_id = request.path_params["changeset_id"]
-        form = await request.form()
-        token = str(form.get("token", ""))
-        try:
-            result = await get_changeset_service().approve_from_review(
-                changeset_id, token
-            )
-            plan = await get_changeset_service().get_for_review(changeset_id, token)
-            return _response(
-                render_change_plan(
-                    plan,
-                    token,
-                    approval_token=result["approval_token"],
                 )
             )
         except ChangesetError as error:

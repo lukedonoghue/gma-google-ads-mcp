@@ -39,7 +39,7 @@ if _CLIENT_ID and _CLIENT_SECRET:
         client_secret=_CLIENT_SECRET,
     )
     mcp = FastMCP(
-        "Grow My Ads Google Ads",
+        "GMA 13 Skills — Google Ads",
         instructions=(
             "Google Ads analysis plus controlled Change Plans. Reporting is "
             "read-only. Never treat a recommendation as permission. Only typed "
@@ -52,7 +52,7 @@ if _CLIENT_ID and _CLIENT_SECRET:
         mask_error_details=True,
     )
 else:
-    mcp = FastMCP("Google Ads Server")
+    mcp = FastMCP("GMA 13 Skills — Google Ads")
 
 
 def initialize_and_mount_tools(parent_mcp: FastMCP) -> None:

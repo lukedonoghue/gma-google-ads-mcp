@@ -29,6 +29,11 @@ PLAN_TTL_SECONDS = 7 * 24 * 60 * 60
 MAX_ACTIONS = 50
 MAX_CAMPAIGNS = 500
 MAX_PLAN_BYTES = 256_000
+BUDGET_MAX_INCREASE_PERCENT = 20
+BUDGET_MAX_DECREASE_PERCENT = 50
+BUDGET_ACCOUNT_CEILING_MULTIPLIER = 2
+BUDGET_CHANGE_COOLDOWN = timedelta(hours=24)
+BUDGET_CHANGE_COOLDOWN_SECONDS = int(BUDGET_CHANGE_COOLDOWN.total_seconds())
 
 SUPPORTED_SKILLS = {
     "instant-account-audit",
@@ -101,6 +106,24 @@ def _bounded_text(
     return normalized
 
 
+def _bounded_json_object(value: Any, field: str, limit: int) -> dict[str, Any]:
+    """Accept only a small, portable JSON object for recommendation metadata."""
+
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ChangesetError(f"{field} must be an object")
+    try:
+        encoded = json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False
+        )
+    except (TypeError, ValueError) as error:
+        raise ChangesetError(f"{field} must contain only valid JSON values") from error
+    if len(encoded.encode()) > limit:
+        raise ChangesetError(f"{field} exceeds {limit} bytes")
+    return json.loads(encoded)
+
+
 def _normalize_customer_id(value: Any, field: str = "customer_id") -> str:
     if not isinstance(value, str):
         raise ChangesetError(f"{field} must be a 10-digit Google Ads customer ID")
@@ -132,6 +155,12 @@ def _identity_owner_id() -> str:
     if not subject:
         raise ChangesetError("An authenticated Google identity is required")
     return hashlib.sha256(f"gma-changesets:{subject}".encode()).hexdigest()
+
+
+def current_identity_owner_id() -> str:
+    """Return the opaque owner binding used by GMA persisted state."""
+
+    return _identity_owner_id()
 
 
 def _operation_hash(plan: Mapping[str, Any], selected_ids: Sequence[str]) -> str:
@@ -205,9 +234,69 @@ def _validate_value_shape(operation_type: str, current: Any, proposed: Any) -> N
                 raise ChangesetError("Budget amount_micros must be a positive integer")
         if current[field] == proposed[field]:
             raise ChangesetError("Budget proposed value must be different")
+        current_amount = current[field]
+        proposed_amount = proposed[field]
+        if proposed_amount > current_amount:
+            if proposed_amount * 100 > current_amount * (
+                100 + BUDGET_MAX_INCREASE_PERCENT
+            ):
+                raise ChangesetError(
+                    "A budget increase may not exceed 20% in one apply"
+                )
+        elif proposed_amount * 100 < current_amount * (
+            100 - BUDGET_MAX_DECREASE_PERCENT
+        ):
+            raise ChangesetError("A budget decrease may not exceed 50% in one apply")
 
 
-def _normalize_action(raw: Mapping[str, Any], customer_id: str) -> dict[str, Any]:
+def _assert_budget_policy(
+    actions: Sequence[Mapping[str, Any]],
+    context: Mapping[str, Any],
+    now: datetime,
+) -> None:
+    """Enforce account-aware budget gates outside model control."""
+
+    budget_actions = [
+        action
+        for action in actions
+        if action["operation_type"] == "set_campaign_budget_amount"
+    ]
+    if not budget_actions:
+        return
+
+    highest = context.get("highest_enabled_budget_micros")
+    if isinstance(highest, bool) or not isinstance(highest, int) or highest <= 0:
+        raise ChangesetError(
+            "Unable to verify the account budget ceiling; budget changes are blocked"
+        )
+
+    ceiling = highest * BUDGET_ACCOUNT_CEILING_MULTIPLIER
+    recent = context.get("recent_budget_changes") or {}
+    if not isinstance(recent, Mapping):
+        raise ChangesetError(
+            "Unable to verify recent budget changes; budget changes are blocked"
+        )
+
+    for action in budget_actions:
+        proposed = action["proposed_value"]["amount_micros"]
+        if proposed > ceiling:
+            raise ChangesetError(
+                f"{action['id']} exceeds the server budget ceiling of "
+                f"{ceiling} micros"
+            )
+        changed_at_raw = recent.get(action["resource_name"])
+        if not changed_at_raw:
+            continue
+        changed_at = _parse_datetime(str(changed_at_raw))
+        if now - changed_at < BUDGET_CHANGE_COOLDOWN:
+            raise ChangesetError(
+                f"{action['id']} changed within the last 24 hours; wait before another budget apply"
+            )
+
+
+def _normalize_action(
+    raw: Mapping[str, Any], customer_id: str, source_skills: Sequence[str]
+) -> dict[str, Any]:
     if not isinstance(raw, Mapping):
         raise ChangesetError("Each action must be an object")
     action_id = _bounded_text(raw.get("id"), "action.id", 64)
@@ -246,6 +335,19 @@ def _normalize_action(raw: Mapping[str, Any], customer_id: str) -> dict[str, Any
     details = raw.get("details")
     if isinstance(details, Sequence) and not isinstance(details, (str, bytes)):
         details = "\n".join(str(item) for item in details)
+    source_skill = raw.get("source_skill")
+    if not source_skill:
+        preferred_skill = {
+            "set_campaign_budget_amount": "budget-reallocator",
+        }.get(operation_type)
+        source_skill = (
+            preferred_skill if preferred_skill in source_skills else source_skills[0]
+        )
+    source_skill = _bounded_text(source_skill, "action.source_skill", 64)
+    if source_skill not in SUPPORTED_SKILLS or source_skill not in source_skills:
+        raise ChangesetError(
+            f"{action_id} source_skill must be one of the plan's source skills"
+        )
     return {
         "id": action_id,
         "priority": int(raw.get("priority", 3)),
@@ -268,6 +370,8 @@ def _normalize_action(raw: Mapping[str, Any], customer_id: str) -> dict[str, Any
             "action.expected_impact",
             600,
         ),
+        "estimate": _bounded_json_object(raw.get("estimate"), "action.estimate", 4_000),
+        "source_skill": source_skill,
         "risk": _bounded_text(raw.get("risk", "medium"), "action.risk", 32),
         "reversible": bool(raw.get("reversible", False)),
         "applyability": applyability,
@@ -325,7 +429,7 @@ def _normalize_plan(
     raw_actions = raw.get("actions") or []
     if not isinstance(raw_actions, list) or len(raw_actions) > MAX_ACTIONS:
         raise ChangesetError(f"actions must contain at most {MAX_ACTIONS} items")
-    actions = [_normalize_action(action, customer_id) for action in raw_actions]
+    actions = [_normalize_action(action, customer_id, skills) for action in raw_actions]
     action_ids = [action["id"] for action in actions]
     if len(action_ids) != len(set(action_ids)):
         raise ChangesetError("Action IDs must be unique within a changeset")
@@ -532,6 +636,7 @@ class GoogleAdsMutationGateway:
         if not names:
             return []
         _, service = self._services(login_customer_id)
+        utils.enforce_customer_access_root(service, customer_id)
         query = (
             "SELECT change_event.change_date_time, "
             "change_event.change_resource_name, "
@@ -558,6 +663,60 @@ class GoogleAdsMutationGateway:
                 }
             )
         return events
+
+    def budget_policy_context(
+        self,
+        customer_id: str,
+        login_customer_id: str | None,
+        actions: Sequence[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Return live account facts required by the budget safety policy."""
+
+        budget_actions = [
+            action
+            for action in actions
+            if action["operation_type"] == "set_campaign_budget_amount"
+        ]
+        if not budget_actions:
+            return {
+                "highest_enabled_budget_micros": None,
+                "recent_budget_changes": {},
+            }
+
+        _, service = self._services(login_customer_id)
+        utils.enforce_customer_access_root(service, customer_id)
+        query = (
+            "SELECT campaign_budget.amount_micros FROM campaign_budget "
+            "WHERE campaign_budget.status = 'ENABLED' "
+            "ORDER BY campaign_budget.amount_micros DESC LIMIT 1"
+        )
+        rows = list(service.search(customer_id=customer_id, query=query))
+        if not rows:
+            raise ChangesetError(
+                "Unable to find an enabled budget for the account safety ceiling"
+            )
+        highest = int(rows[0].campaign_budget.amount_micros)
+
+        events = self.recent_change_events(
+            customer_id,
+            login_customer_id,
+            [action["resource_name"] for action in budget_actions],
+        )
+        recent: dict[str, str] = {}
+        for event in events:
+            fields = set(event.get("changed_fields") or [])
+            if (
+                "amount_micros" not in fields
+                and "campaign_budget.amount_micros" not in fields
+            ):
+                continue
+            resource_name = str(event.get("change_resource_name", ""))
+            if resource_name and resource_name not in recent:
+                recent[resource_name] = str(event.get("change_date_time", ""))
+        return {
+            "highest_enabled_budget_micros": highest,
+            "recent_budget_changes": recent,
+        }
 
 
 class ChangesetService:
@@ -675,6 +834,51 @@ class ChangesetService:
         )
         await self._store.put(plan["id"], plan, ttl=remaining)
 
+    def _enforce_budget_policy(
+        self, plan: Mapping[str, Any], actions: Sequence[Mapping[str, Any]]
+    ) -> None:
+        if not any(
+            action["operation_type"] == "set_campaign_budget_amount"
+            for action in actions
+        ):
+            return
+        context = self._gateway.budget_policy_context(
+            plan["customer_id"], plan.get("login_customer_id"), actions
+        )
+        _assert_budget_policy(actions, context, self._now_fn())
+
+    async def _claim_budget_cooldowns(
+        self, plan: Mapping[str, Any], actions: Sequence[Mapping[str, Any]]
+    ) -> None:
+        """Atomically reserve each budget resource before a live mutation.
+
+        Change Event reporting can lag. These durable claims close that window so
+        two approved plans cannot change the same budget within 24 hours.
+        """
+
+        resources = sorted(
+            {
+                action["resource_name"]
+                for action in actions
+                if action["operation_type"] == "set_campaign_budget_amount"
+            }
+        )
+        for resource_name in resources:
+            cooldown_key = hashlib.sha256(
+                (
+                    "gma-budget-cooldown:" f"{plan['customer_id']}:{resource_name}"
+                ).encode()
+            ).hexdigest()
+            claimed = await self._replay_guard.claim(
+                cooldown_key,
+                ttl_seconds=BUDGET_CHANGE_COOLDOWN_SECONDS,
+            )
+            if not claimed:
+                raise ChangesetError(
+                    "This campaign budget was already changed by GMA within the "
+                    "last 24 hours; wait before applying another budget change"
+                )
+
     @staticmethod
     def _selected_actions(plan: Mapping[str, Any], selected_ids: Sequence[str]):
         if not selected_ids or len(selected_ids) != len(set(selected_ids)):
@@ -734,6 +938,7 @@ class ChangesetService:
             raise ChangesetError(
                 "Current Google Ads values changed for: " + ", ".join(drift)
             )
+        self._enforce_budget_policy(plan, actions)
         result = self._gateway.mutate(
             plan["customer_id"],
             plan.get("login_customer_id"),
@@ -763,13 +968,16 @@ class ChangesetService:
             "status": "validated",
             "selected_action_ids": canonical_selected_ids,
             "operation_hash": operation_hash,
-            "approval_confirmation": f"APPROVE {operation_hash[:12]}",
+            "next_step": (
+                "Review the exact diff, then explicitly approve it through the "
+                "Claude or Codex tool confirmation."
+            ),
             "expires_at": plan["expires_at"],
         }
 
-    async def approve(
-        self, changeset_id: str, operation_hash: str, confirmation: str
-    ) -> dict[str, Any]:
+    async def approve(self, changeset_id: str, operation_hash: str) -> dict[str, Any]:
+        """Record host-gated human approval without exposing a reusable secret."""
+
         plan = await self._owned(changeset_id)
         if plan["run_mode"] != "interactive":
             raise ChangesetError("Scheduled analysis can never approve changes")
@@ -780,11 +988,6 @@ class ChangesetService:
             raise ChangesetError(
                 "Changeset is not validated for this exact operation hash"
             )
-        expected = f"APPROVE {operation_hash[:12]}"
-        if confirmation.strip() != expected:
-            raise ChangesetError(f"Confirmation must exactly match: {expected}")
-        approval_token = secrets.token_urlsafe(32)
-        approval_token_hash = hashlib.sha256(approval_token.encode()).hexdigest()
         selected = set(plan["selected_action_ids"])
         for action in plan["actions"]:
             if action["id"] in selected:
@@ -794,7 +997,7 @@ class ChangesetService:
             "status": "approved",
             "approved_at": _iso(self._now_fn()),
             "operation_hash": operation_hash,
-            "approval_token_hash": approval_token_hash,
+            "approval_surface": "host_tool_confirmation",
             "consumed": False,
         }
         await self._save(plan)
@@ -803,48 +1006,14 @@ class ChangesetService:
             "status": "approved",
             "selected_action_ids": plan["selected_action_ids"],
             "operation_hash": operation_hash,
-            "approval_token": approval_token,
-            "warning": "The token is one-time and valid only for this exact validated changeset.",
+            "next_step": (
+                "Use the separate apply tool. The host must ask for human permission again."
+            ),
         }
 
-    async def approve_from_review(
-        self, changeset_id: str, review_token: str
-    ) -> dict[str, Any]:
-        """Approve a validated plan from its private bearer review page."""
+    async def apply(self, changeset_id: str) -> dict[str, Any]:
+        """Apply a previously validated and host-approved changeset once."""
 
-        plan = await self._reviewed(changeset_id, review_token)
-        if plan["run_mode"] != "interactive":
-            raise ChangesetError("Scheduled analysis can never approve changes")
-        operation_hash = plan.get("operation_hash")
-        if plan.get("status") != "validated" or not operation_hash:
-            raise ChangesetError(
-                "Validate the selected actions in Claude or Codex first"
-            )
-        approval_token = secrets.token_urlsafe(32)
-        approval_token_hash = hashlib.sha256(approval_token.encode()).hexdigest()
-        selected = set(plan["selected_action_ids"])
-        for action in plan["actions"]:
-            if action["id"] in selected:
-                action["approval_status"] = "approved"
-        plan["status"] = "approved"
-        plan["approval"] = {
-            "status": "approved",
-            "approved_at": _iso(self._now_fn()),
-            "operation_hash": operation_hash,
-            "approval_token_hash": approval_token_hash,
-            "approval_surface": "private_review_page",
-            "consumed": False,
-        }
-        await self._save(plan)
-        return {
-            "changeset_id": plan["id"],
-            "status": "approved",
-            "selected_action_ids": plan["selected_action_ids"],
-            "operation_hash": operation_hash,
-            "approval_token": approval_token,
-        }
-
-    async def apply(self, changeset_id: str, approval_token: str) -> dict[str, Any]:
         plan = await self._owned(changeset_id)
         _assert_live_apply_enabled(plan["customer_id"])
         if plan["run_mode"] != "interactive":
@@ -852,18 +1021,13 @@ class ChangesetService:
                 "Scheduled analysis can never apply Google Ads changes"
             )
         approval = plan.get("approval") or {}
-        supplied_hash = hashlib.sha256(approval_token.encode()).hexdigest()
         if (
             plan.get("status") != "approved"
             or approval.get("status") != "approved"
             or approval.get("consumed")
-            or not secrets.compare_digest(
-                supplied_hash, str(approval.get("approval_token_hash", ""))
-            )
+            or approval.get("operation_hash") != plan.get("operation_hash")
         ):
-            raise ChangesetError(
-                "Approval token is missing, invalid, or already consumed"
-            )
+            raise ChangesetError("Changeset is not approved or was already consumed")
         selected_ids = plan["selected_action_ids"]
         if _operation_hash(plan, selected_ids) != plan.get("operation_hash"):
             raise ChangesetError("Changeset contents no longer match the approved hash")
@@ -888,8 +1052,13 @@ class ChangesetService:
                 "Current Google Ads values changed after validation for: "
                 + ", ".join(drift)
             )
+        self._enforce_budget_policy(plan, actions)
+        await self._claim_budget_cooldowns(plan, actions)
+        replay_key = hashlib.sha256(
+            f"gma-apply:{plan['id']}:{plan['operation_hash']}".encode()
+        ).hexdigest()
         claimed = await self._replay_guard.claim(
-            supplied_hash,
+            replay_key,
             ttl_seconds=max(
                 1,
                 int(
@@ -900,7 +1069,7 @@ class ChangesetService:
             ),
         )
         if not claimed:
-            raise ChangesetError("Approval token replay was rejected")
+            raise ChangesetError("Approved changeset replay was rejected")
 
         approval["consumed"] = True
         approval["consumed_at"] = _iso(self._now_fn())
@@ -920,7 +1089,7 @@ class ChangesetService:
                 "status": "failed",
                 "failed_at": _iso(self._now_fn()),
                 "message": str(error)[:500],
-                "approval_token_consumed": True,
+                "approval_consumed": True,
             }
             await self._save(plan)
             raise

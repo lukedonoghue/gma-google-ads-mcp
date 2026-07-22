@@ -101,20 +101,16 @@ async def validate(changeset_id: str, selected_action_ids: list[str]) -> dict[st
     ),
     meta={"anthropic/requiresUserInteraction": True},
 )
-async def approve(
-    changeset_id: str, operation_hash: str, confirmation: str
-) -> dict[str, Any]:
-    """Approve the exact validated selection and issue a one-time token.
+async def approve(changeset_id: str, operation_hash: str) -> dict[str, Any]:
+    """Approve the exact validated selection after the host asks the user.
 
-    The host must ask a human every time. The confirmation phrase and operation
-    hash must match the validation response exactly. This stores approval but
-    does not change Google Ads.
+    The host must ask a human every time. The operation hash must match the
+    validation response exactly. This stores approval, returns no reusable
+    secret, and does not change Google Ads.
     """
 
     try:
-        return await get_changeset_service().approve(
-            changeset_id, operation_hash, confirmation
-        )
+        return await get_changeset_service().approve(changeset_id, operation_hash)
     except ChangesetError as error:
         raise _tool_error(error) from error
 
@@ -128,7 +124,7 @@ async def approve(
     ),
     meta={"anthropic/requiresUserInteraction": True},
 )
-async def apply(changeset_id: str, approval_token: str) -> dict[str, Any]:
+async def apply(changeset_id: str) -> dict[str, Any]:
     """Atomically apply only an approved, unchanged, allowlisted changeset.
 
     Live apply fails closed unless every global, developer-token, per-customer,
@@ -137,7 +133,7 @@ async def apply(changeset_id: str, approval_token: str) -> dict[str, Any]:
     """
 
     try:
-        return await get_changeset_service().apply(changeset_id, approval_token)
+        return await get_changeset_service().apply(changeset_id)
     except ChangesetError as error:
         raise _tool_error(error) from error
 

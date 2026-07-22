@@ -29,6 +29,8 @@ class FakeGateway:
             "A-002": {"amount_micros": 10_000_000},
         }
         self.mutations = []
+        self.highest_enabled_budget_micros = 25_000_000
+        self.recent_budget_changes = {}
 
     def read_current_values(self, _customer_id, _login_customer_id, actions):
         return {action["id"]: deepcopy(self.values[action["id"]]) for action in actions}
@@ -68,6 +70,12 @@ class FakeGateway:
             }
             for resource_name in resource_names
         ]
+
+    def budget_policy_context(self, _customer_id, _login_customer_id, _actions):
+        return {
+            "highest_enabled_budget_micros": self.highest_enabled_budget_micros,
+            "recent_budget_changes": deepcopy(self.recent_budget_changes),
+        }
 
 
 def sample_plan(*, run_mode="interactive"):
@@ -119,6 +127,10 @@ def sample_plan(*, run_mode="interactive"):
                 "evidence_summary": "CPA $32 vs $45 target and >20% budget-lost IS, 2026-06-21 to 2026-07-20.",
                 "details": "The exact $2/day increase stays within the confirmed account budget.",
                 "expected_impact": "More eligible traffic at the current efficiency range.",
+                "estimate": {
+                    "label": "estimate",
+                    "added_clicks_per_day": 3.2,
+                },
                 "risk": "low",
                 "reversible": True,
                 "applyability": "applyable",
@@ -169,6 +181,8 @@ class ChangesetServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("$420 spend", created["actions"][0]["evidence_summary"])
         self.assertIn("reversible", created["actions"][0]["details"])
         self.assertEqual(created["actions"][2]["operation_type"], "advisory")
+        self.assertEqual(created["actions"][1]["source_skill"], "budget-reallocator")
+        self.assertEqual(created["actions"][1]["estimate"]["label"], "estimate")
 
         stored = await self.store.get(created["id"])
         self.assertEqual(stored["owner_id"], "owner-one")
@@ -185,6 +199,40 @@ class ChangesetServiceTest(unittest.IsolatedAsyncioTestCase):
         plan["actions"][0]["resource_name"] = "customers/1111111111/campaigns/456"
         with self.assertRaisesRegex(ChangesetError, "must belong"):
             await self.service.create(plan)
+
+    async def test_rejects_budget_increase_above_twenty_percent(self):
+        plan = sample_plan()
+        plan["actions"][1]["proposed_value"] = {"amount_micros": 12_000_001}
+        with self.assertRaisesRegex(ChangesetError, "may not exceed 20%"):
+            await self.service.create(plan)
+
+    async def test_rejects_budget_decrease_above_fifty_percent(self):
+        plan = sample_plan()
+        plan["actions"][1]["proposed_value"] = {"amount_micros": 4_999_999}
+        with self.assertRaisesRegex(ChangesetError, "may not exceed 50%"):
+            await self.service.create(plan)
+
+    async def test_validate_rejects_budget_above_account_ceiling(self):
+        created = await self.service.create(sample_plan())
+        self.gateway.highest_enabled_budget_micros = 5_000_000
+        with patch.dict(
+            os.environ, {"GMA_ENABLE_CHANGESET_VALIDATION": "1"}, clear=False
+        ):
+            with self.assertRaisesRegex(ChangesetError, "budget ceiling"):
+                await self.service.validate(created["id"], ["A-002"])
+        self.assertEqual(self.gateway.mutations, [])
+
+    async def test_validate_rejects_budget_changed_within_twenty_four_hours(self):
+        created = await self.service.create(sample_plan())
+        self.gateway.recent_budget_changes = {
+            "customers/1234567890/campaignBudgets/789": "2026-07-21T14:30:00Z"
+        }
+        with patch.dict(
+            os.environ, {"GMA_ENABLE_CHANGESET_VALIDATION": "1"}, clear=False
+        ):
+            with self.assertRaisesRegex(ChangesetError, "last 24 hours"):
+                await self.service.validate(created["id"], ["A-002"])
+        self.assertEqual(self.gateway.mutations, [])
 
     async def test_scheduled_plan_cannot_validate(self):
         created = await self.service.create(sample_plan(run_mode="scheduled_analysis"))
@@ -209,11 +257,8 @@ class ChangesetServiceTest(unittest.IsolatedAsyncioTestCase):
             approved = await self.service.approve(
                 created["id"],
                 validated["operation_hash"],
-                validated["approval_confirmation"],
             )
-            applied = await self.service.apply(
-                created["id"], approved["approval_token"]
-            )
+            applied = await self.service.apply(created["id"])
             verified = await self.service.verify(created["id"])
 
         self.assertEqual(applied["status"], "applied_unverified")
@@ -243,15 +288,46 @@ class ChangesetServiceTest(unittest.IsolatedAsyncioTestCase):
             approved = await self.service.approve(
                 created["id"],
                 validated["operation_hash"],
-                validated["approval_confirmation"],
             )
             self.gateway.values["A-001"] = {"status": "PAUSED"}
             with self.assertRaisesRegex(ChangesetError, "changed after validation"):
-                await self.service.apply(created["id"], approved["approval_token"])
+                await self.service.apply(created["id"])
 
         self.assertEqual(
             self.gateway.mutations,
             [{"ids": ["A-001"], "validate_only": True}],
+        )
+
+    async def test_immediate_budget_cooldown_blocks_a_second_changeset(self):
+        environment = {
+            "GMA_ENABLE_CHANGESET_VALIDATION": "1",
+            "GMA_ENABLE_MUTATIONS": "1",
+            "GMA_ALLOW_LIVE_MUTATIONS": "1",
+            "GMA_DEVELOPER_TOKEN_AD_MANAGEMENT_CONFIRMED": "1",
+            "GMA_LIVE_MUTATION_CUSTOMER_IDS": "1234567890",
+        }
+        first = await self.service.create(sample_plan())
+        with patch.dict(os.environ, environment, clear=False):
+            validated = await self.service.validate(first["id"], ["A-002"])
+            await self.service.approve(first["id"], validated["operation_hash"])
+            await self.service.apply(first["id"])
+
+            second_plan = sample_plan()
+            second_plan["actions"][1]["current_value"] = {"amount_micros": 12_000_000}
+            second_plan["actions"][1]["proposed_value"] = {"amount_micros": 14_400_000}
+            second = await self.service.create(second_plan)
+            validated = await self.service.validate(second["id"], ["A-002"])
+            await self.service.approve(second["id"], validated["operation_hash"])
+            with self.assertRaisesRegex(ChangesetError, "within the last 24 hours"):
+                await self.service.apply(second["id"])
+
+        self.assertEqual(
+            self.gateway.mutations,
+            [
+                {"ids": ["A-002"], "validate_only": True},
+                {"ids": ["A-002"], "validate_only": False},
+                {"ids": ["A-002"], "validate_only": True},
+            ],
         )
 
     async def test_apply_requires_every_server_side_flag(self):
@@ -263,7 +339,6 @@ class ChangesetServiceTest(unittest.IsolatedAsyncioTestCase):
             approved = await self.service.approve(
                 created["id"],
                 validated["operation_hash"],
-                validated["approval_confirmation"],
             )
             with patch.dict(
                 os.environ,
@@ -276,7 +351,7 @@ class ChangesetServiceTest(unittest.IsolatedAsyncioTestCase):
                 clear=False,
             ):
                 with self.assertRaisesRegex(ChangesetError, "globally disabled"):
-                    await self.service.apply(created["id"], approved["approval_token"])
+                    await self.service.apply(created["id"])
         self.assertEqual(
             self.gateway.mutations,
             [{"ids": ["A-001"], "validate_only": True}],
@@ -294,7 +369,7 @@ class ChangesetServiceTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ChangesetError, "not found"):
             await other.get(created["id"])
 
-    async def test_private_review_selection_binds_validation_and_approval(self):
+    async def test_private_review_selection_binds_validation_and_host_approval(self):
         created = await self.service.create(sample_plan())
         token = parse_qs(urlparse(created["review_url"]).query)["token"][0]
         selected = await self.service.select_for_review(created["id"], token, ["A-002"])
@@ -306,10 +381,13 @@ class ChangesetServiceTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ChangesetError, "user's Change Plan selection"):
                 await self.service.validate(created["id"], ["A-001"])
             validated = await self.service.validate(created["id"], ["A-002"])
-            approved = await self.service.approve_from_review(created["id"], token)
+            approved = await self.service.approve(
+                created["id"], validated["operation_hash"]
+            )
 
         self.assertEqual(approved["operation_hash"], validated["operation_hash"])
-        self.assertTrue(approved["approval_token"])
+        self.assertNotIn("approval_token", approved)
+        self.assertNotIn("approval_confirmation", validated)
 
     async def test_review_page_escapes_account_content_and_has_expandable_details(self):
         plan = sample_plan()
