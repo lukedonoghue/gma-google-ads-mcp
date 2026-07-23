@@ -12,12 +12,13 @@ from typing import Any, Mapping, Sequence
 from ads_mcp import utils
 from ads_mcp.changeset_store import AsyncChangesetStore, get_changeset_store
 from ads_mcp.changesets import current_identity_owner_id, get_changeset_service
+from ads_mcp.goal_targets import build_goal_context
 from ads_mcp.skill_runs.budget_service import BudgetReallocatorRunService
 from ads_mcp.skill_runs.common import resolve_analysis_window, trailing_complete_days
 
-RUNTIME_VERSION = "1.0.0-alpha.1"
+RUNTIME_VERSION = "1.0.0-alpha.2"
 METHODOLOGY_VERSIONS = {"budget_reallocator": "gma-budget-v1.0.0"}
-EXPECTED_PLUGIN_VERSION = "0.5.0"
+EXPECTED_PLUGIN_VERSION = "0.5.1"
 SCOPE_TTL_SECONDS = 24 * 60 * 60
 RUN_TTL_SECONDS = 90 * 24 * 60 * 60
 MODULES = {
@@ -607,7 +608,12 @@ class ScopeGateway:
             service,
             customer,
             "SELECT campaign.id, campaign.name, campaign.status, "
-            "campaign.advertising_channel_type "
+            "campaign.advertising_channel_type, campaign.bidding_strategy, "
+            "campaign.bidding_strategy_type, "
+            "campaign.target_cpa.target_cpa_micros, "
+            "campaign.maximize_conversions.target_cpa_micros, "
+            "campaign.target_roas.target_roas, "
+            "campaign.maximize_conversion_value.target_roas "
             "FROM campaign WHERE campaign.status != 'REMOVED'"
             f"{campaign_filter} ORDER BY campaign.name LIMIT 500",
         )
@@ -681,6 +687,57 @@ class ScopeGateway:
                 "business_mode must be ecommerce, lead_gen, or hybrid"
             )
 
+        goal_coverage_gaps: list[str] = []
+        try:
+            bidding_strategy_rows = self._search(
+                service,
+                customer,
+                "SELECT bidding_strategy.id, bidding_strategy.resource_name, "
+                "bidding_strategy.name, bidding_strategy.type, "
+                "bidding_strategy.target_cpa.target_cpa_micros, "
+                "bidding_strategy.maximize_conversions.target_cpa_micros, "
+                "bidding_strategy.target_roas.target_roas, "
+                "bidding_strategy.maximize_conversion_value.target_roas "
+                "FROM bidding_strategy LIMIT 500",
+            )
+        except Exception as error:
+            bidding_strategy_rows = []
+            goal_coverage_gaps.append(
+                "Customer-owned portfolio bidding targets unavailable: "
+                + str(error)[:240]
+            )
+        try:
+            accessible_strategy_rows = self._search(
+                service,
+                customer,
+                "SELECT accessible_bidding_strategy.id, "
+                "accessible_bidding_strategy.resource_name, "
+                "accessible_bidding_strategy.name, "
+                "accessible_bidding_strategy.type, "
+                "accessible_bidding_strategy.target_cpa.target_cpa_micros, "
+                "accessible_bidding_strategy.maximize_conversions.target_cpa_micros, "
+                "accessible_bidding_strategy.target_roas.target_roas, "
+                "accessible_bidding_strategy.maximize_conversion_value.target_roas "
+                "FROM accessible_bidding_strategy LIMIT 500",
+            )
+        except Exception as error:
+            accessible_strategy_rows = []
+            goal_coverage_gaps.append(
+                "Manager-owned portfolio bidding targets unavailable: "
+                + str(error)[:240]
+            )
+
+        selected_business_mode = business_mode or inferred
+        goal_context = build_goal_context(
+            campaign_rows,
+            spend_by_campaign=spend_by_campaign,
+            bidding_strategy_rows=bidding_strategy_rows,
+            accessible_strategy_rows=accessible_strategy_rows,
+            business_mode=selected_business_mode,
+            inferred_business_mode=inferred,
+            currency=account.currency_code,
+            coverage_gaps=goal_coverage_gaps,
+        )
         scope = {
             "customer_id": customer,
             "login_customer_id": login,
@@ -701,11 +758,12 @@ class ScopeGateway:
                 }
                 for row in campaign_rows
             ],
-            "business_mode": business_mode or inferred,
+            "business_mode": selected_business_mode,
             "business_mode_inferred": inferred,
             "business_mode_needs_confirmation": (
                 not business_mode or business_mode != inferred
             ),
+            "goal_context": goal_context,
             "campaign_spend_window_start": selector_start.isoformat(),
             "campaign_spend_window_end": selector_end.isoformat(),
             "run_mode": "interactive_read_only",

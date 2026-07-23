@@ -101,6 +101,12 @@ class ScopeQueryService:
                         name="Zero Spend",
                         status="ENABLED",
                         advertising_channel_type="SEARCH",
+                        bidding_strategy="",
+                        bidding_strategy_type="MAXIMIZE_CONVERSIONS",
+                        target_cpa=SimpleNamespace(target_cpa_micros=0),
+                        maximize_conversions=SimpleNamespace(target_cpa_micros=0),
+                        target_roas=SimpleNamespace(target_roas=0),
+                        maximize_conversion_value=SimpleNamespace(target_roas=0),
                     )
                 ),
                 SimpleNamespace(
@@ -109,6 +115,14 @@ class ScopeQueryService:
                         name="Paused Spender",
                         status="PAUSED",
                         advertising_channel_type="SEARCH",
+                        bidding_strategy="",
+                        bidding_strategy_type="TARGET_CPA",
+                        target_cpa=SimpleNamespace(
+                            target_cpa_micros=10_000_000
+                        ),
+                        maximize_conversions=SimpleNamespace(target_cpa_micros=0),
+                        target_roas=SimpleNamespace(target_roas=0),
+                        maximize_conversion_value=SimpleNamespace(target_roas=0),
                     )
                 ),
                 SimpleNamespace(
@@ -117,9 +131,21 @@ class ScopeQueryService:
                         name="Enabled Spender",
                         status="ENABLED",
                         advertising_channel_type="SEARCH",
+                        bidding_strategy="",
+                        bidding_strategy_type="TARGET_CPA",
+                        target_cpa=SimpleNamespace(
+                            target_cpa_micros=50_000_000
+                        ),
+                        maximize_conversions=SimpleNamespace(target_cpa_micros=0),
+                        target_roas=SimpleNamespace(target_roas=0),
+                        maximize_conversion_value=SimpleNamespace(target_roas=0),
                     )
                 ),
             ]
+        if "FROM bidding_strategy" in query:
+            return []
+        if "FROM accessible_bidding_strategy" in query:
+            return []
         if "FROM conversion_action" in query:
             return [
                 SimpleNamespace(
@@ -313,6 +339,20 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["scope"]["campaigns"][2]["spend_micros"], 0)
         self.assertEqual(result["scope"]["campaign_spend_window_start"], "2026-06-22")
         self.assertEqual(result["scope"]["campaign_spend_window_end"], "2026-07-21")
+        suggestion = result["scope"]["goal_context"]["selected_suggestion"]
+        self.assertEqual(suggestion["target_cpa_micros"], 50_000_000)
+        self.assertEqual(suggestion["campaign_ids"], ["303"])
+        inventory_query = next(
+            query for query in service.queries if "FROM campaign WHERE" in query
+        )
+        self.assertIn(
+            "campaign.maximize_conversions.target_cpa_micros",
+            inventory_query,
+        )
+        self.assertIn(
+            "campaign.maximize_conversion_value.target_roas",
+            inventory_query,
+        )
         spend_query = next(
             query for query in service.queries if "metrics.cost_micros FROM campaign" in query
         )
