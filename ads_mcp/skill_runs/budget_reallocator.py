@@ -94,6 +94,7 @@ def _campaign_gate(
     goal_verified = bool(campaign.get("goal_scope_verified"))
     clicks_per_day = float(campaign.get("clicks") or 0) / max(days, 1)
     conversions = float(campaign.get("conversions") or 0)
+    status = str(campaign.get("status") or "UNKNOWN")
     bidding_strategy = str(campaign.get("bidding_strategy_type") or "UNKNOWN")
     channel_type = str(campaign.get("channel_type") or "UNKNOWN")
     if bidding_strategy == "TARGET_ROAS":
@@ -109,6 +110,11 @@ def _campaign_gate(
 
     holds: list[str] = []
     routes: list[str] = []
+    if status != "ENABLED":
+        holds.append(
+            f"Campaign is {status.replace('_', ' ').lower()}; only enabled campaigns "
+            "can donate or receive budget"
+        )
     if days < 14:
         holds.append("Fewer than 14 days of evidence")
     if not outcome_quality_confirmed:
@@ -179,7 +185,7 @@ def _campaign_gate(
     return {
         "campaign_id": str(campaign["id"]),
         "campaign_name": campaign["name"],
-        "status": campaign.get("status", "UNKNOWN"),
+        "status": status,
         "channel_type": campaign.get("channel_type", "UNKNOWN"),
         "efficiency": efficiency,
         "constraint": constraint,

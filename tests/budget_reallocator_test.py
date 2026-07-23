@@ -24,11 +24,12 @@ def campaign(
     goal_scope_verified: bool = True,
     shared: bool = False,
     recent_change: str | None = None,
+    status: str = "ENABLED",
 ):
     return {
         "id": campaign_id,
         "name": name,
-        "status": "ENABLED",
+        "status": status,
         "channel_type": channel_type,
         "bidding_strategy_type": bidding_strategy_type,
         "budget_resource_name": f"customers/1234567890/campaignBudgets/{campaign_id}",
@@ -123,6 +124,47 @@ class BudgetReallocatorTest(unittest.TestCase):
         self.assertEqual(result["status"], "hold")
         self.assertEqual(result["applyable_action_ids"], [])
         self.assertIn("Outcome quality has not been confirmed", result["holds"])
+
+    def test_paused_campaigns_cannot_donate_or_receive_budget(self):
+        result = evaluate_budget_reallocation(
+            snapshot(
+                campaign(
+                    "101",
+                    "Search | Paused Donor",
+                    budget=20_000_000,
+                    cost=6_000_000_000,
+                    conversions=50,
+                    lost_budget=0.02,
+                    lost_rank=0.05,
+                    search_is=0.80,
+                    status="PAUSED",
+                ),
+                campaign(
+                    "202",
+                    "Search | Paused Recipient",
+                    budget=20_000_000,
+                    cost=3_000_000_000,
+                    conversions=100,
+                    lost_budget=0.30,
+                    lost_rank=0.04,
+                    search_is=0.55,
+                    status="PAUSED",
+                ),
+            ),
+            business_mode="lead_gen",
+            target_cpa_micros=50_000_000,
+            outcome_quality_confirmed=True,
+        )
+
+        self.assertEqual(result["status"], "hold")
+        self.assertEqual(result["applyable_action_ids"], [])
+        self.assertTrue(
+            all(
+                "only enabled campaigns can donate or receive budget"
+                in " ".join(row["holds"])
+                for row in result["campaign_results"]
+            )
+        )
 
     def test_mixed_rank_and_budget_constraint_routes_instead_of_scaling(self):
         result = evaluate_budget_reallocation(
