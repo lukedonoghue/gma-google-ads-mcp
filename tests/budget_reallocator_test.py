@@ -142,6 +142,43 @@ class BudgetReallocatorTest(unittest.TestCase):
             "budget_reallocator",
         )
 
+    def test_each_recovery_task_claims_only_the_hold_it_can_resolve(self):
+        result = evaluate_budget_reallocation(
+            snapshot(
+                campaign(
+                    "202",
+                    "Search | Multiple Holds",
+                    budget=20_000_000,
+                    cost=3_000_000_000,
+                    conversions=100,
+                    lost_budget=0.30,
+                    lost_rank=0.04,
+                    search_is=0.55,
+                    status="PAUSED",
+                    recent_change="2026-07-18",
+                )
+            ),
+            business_mode="lead_gen",
+            target_cpa_micros=50_000_000,
+            outcome_quality_confirmed=False,
+        )
+
+        actions = {item["id"]: item for item in result["recovery_actions"]}
+        self.assertEqual(
+            actions["REC-OUTCOME-QUALITY"]["resolves"],
+            ["Outcome quality has not been confirmed"],
+        )
+        self.assertEqual(
+            actions["REC-RESOLVE-CAMPAIGN-STATUS"]["resolves"],
+            [
+                "Campaign is paused; only enabled campaigns can donate or receive budget"
+            ],
+        )
+        self.assertEqual(
+            actions["REC-WAIT-FOR-LEARNING"]["resolves"],
+            ["Recent material change on 2026-07-18"],
+        )
+
     def test_paused_campaigns_cannot_donate_or_receive_budget(self):
         result = evaluate_budget_reallocation(
             snapshot(

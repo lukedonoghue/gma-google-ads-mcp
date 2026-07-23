@@ -300,11 +300,16 @@ def _recovery_actions(
     actions: list[dict[str, Any]] = []
 
     def holds_for(code: str) -> list[str]:
-        return [
-            hold
-            for gate in by_code.get(code, [])
-            for hold in gate.get("holds") or []
-        ]
+        messages: list[str] = []
+        for gate in by_code.get(code, []):
+            codes = [str(item) for item in gate.get("hold_codes") or []]
+            holds = [str(item) for item in gate.get("holds") or []]
+            messages.extend(
+                hold
+                for hold_code, hold in zip(codes, holds, strict=False)
+                if hold_code == code
+            )
+        return list(dict.fromkeys(messages))
 
     if by_code["OUTCOME_QUALITY_UNCONFIRMED"]:
         affected = by_code["OUTCOME_QUALITY_UNCONFIRMED"]
