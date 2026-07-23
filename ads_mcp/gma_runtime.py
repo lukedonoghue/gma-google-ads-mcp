@@ -22,7 +22,7 @@ from ads_mcp.skill_runs.common import (
 )
 from ads_mcp.skill_runs.red_flag_service import RedFlagRadarRunService
 
-RUNTIME_VERSION = "1.0.0-alpha.8"
+RUNTIME_VERSION = "1.0.0-alpha.9"
 METHODOLOGY_VERSIONS = {
     "red_flag_radar": "gma-red-flag-v1.0.2",
     "budget_reallocator": "gma-budget-v1.0.0",
@@ -575,6 +575,8 @@ def render_run_result(result: Mapping[str, Any]) -> str:
                 f"**Why:** {_text(recommendation.get('reason'))}",
                 "",
                 f"**Evidence:** {_text(recommendation.get('evidence_summary'))}",
+                "",
+                f"**What to do:** {_text(recommendation.get('details'))}",
                 "",
                 f"**Expected impact:** {_text(recommendation.get('expected_impact'))}",
                 "",

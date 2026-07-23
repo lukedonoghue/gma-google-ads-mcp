@@ -777,6 +777,10 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Recommended actions", rendered["content"])
         self.assertIn("Review the policy-limited ad", rendered["content"])
+        self.assertIn(
+            "**What to do:** Inspect its policy topic and prepare a compliant replacement.",
+            rendered["content"],
+        )
 
     async def test_hybrid_budget_scope_requires_separate_campaign_groups(self):
         scope = prepared_scope()
