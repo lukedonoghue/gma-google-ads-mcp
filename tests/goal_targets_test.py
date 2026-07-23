@@ -163,6 +163,73 @@ class GoalTargetsTest(unittest.TestCase):
         )
         self.assertEqual(result["spend_coverage_percent"], 100.0)
 
+    def test_no_configured_cpa_uses_reported_actual_as_reference_only(self):
+        goals = [
+            campaign_goal(
+                campaign(
+                    101,
+                    "Lead Search",
+                    strategy_type="MAXIMIZE_CONVERSIONS",
+                ),
+                spend_micros=600_000_000,
+                reported_conversions=20,
+                portfolio_strategies={},
+            ),
+            campaign_goal(
+                campaign(
+                    202,
+                    "Lead Search Two",
+                    strategy_type="MAXIMIZE_CONVERSIONS",
+                ),
+                spend_micros=400_000_000,
+                reported_conversions=5,
+                portfolio_strategies={},
+            ),
+        ]
+        result = build_goal_suggestion(
+            goals,
+            business_mode="lead_gen",
+            currency="USD",
+        )
+
+        self.assertEqual(result["status"], "reference_only")
+        self.assertEqual(result["source"], "observed_google_ads_performance")
+        self.assertEqual(result["target_cpa_micros"], 40_000_000)
+        self.assertEqual(result["display_value"], "USD 40.00")
+        self.assertEqual(
+            result["basis"], "reported_actual_cpa_no_configured_target"
+        )
+        self.assertTrue(result["confirmation_required"])
+        self.assertFalse(result["business_goal_verified"])
+
+    def test_no_configured_roas_uses_reported_actual_as_reference_only(self):
+        goals = [
+            campaign_goal(
+                campaign(
+                    101,
+                    "Shopping",
+                    strategy_type="MAXIMIZE_CONVERSION_VALUE",
+                ),
+                spend_micros=1_000_000_000,
+                reported_conversions=10,
+                reported_conversion_value=3_500,
+                portfolio_strategies={},
+            )
+        ]
+        result = build_goal_suggestion(
+            goals,
+            business_mode="ecommerce",
+            currency="USD",
+        )
+
+        self.assertEqual(result["status"], "reference_only")
+        self.assertEqual(result["target_roas"], 3.5)
+        self.assertEqual(result["target_roas_percent"], 350.0)
+        self.assertEqual(result["display_value"], "3.50× (350%)")
+        self.assertEqual(
+            result["basis"], "reported_actual_roas_no_configured_target"
+        )
+
     def test_context_returns_both_modes_and_selected_suggestion(self):
         rows = [
             ns(

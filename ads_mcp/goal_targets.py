@@ -105,6 +105,8 @@ def campaign_goal(
     campaign: Any,
     *,
     spend_micros: int,
+    reported_conversions: float = 0,
+    reported_conversion_value: float = 0,
     portfolio_strategies: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
     """Return one campaign's configured bidding target without judging its value."""
@@ -131,6 +133,18 @@ def campaign_goal(
     goal_type, target_cpa_micros, target_roas = _configured_target(
         entity, strategy_type
     )
+    conversions = max(float(reported_conversions), 0)
+    conversion_value = max(float(reported_conversion_value), 0)
+    observed_cpa_micros = (
+        int(round(spend_micros / conversions))
+        if spend_micros > 0 and conversions > 0
+        else None
+    )
+    observed_roas = (
+        conversion_value / (spend_micros / 1_000_000)
+        if spend_micros > 0 and conversion_value > 0
+        else None
+    )
     return {
         "campaign_id": str(campaign.id),
         "campaign_name": str(campaign.name),
@@ -148,6 +162,12 @@ def campaign_goal(
         ),
         "strategy_name": strategy_name,
         "strategy_resource_name": strategy_resource_name,
+        "reported_conversions": conversions,
+        "reported_conversion_value": conversion_value,
+        "observed_cpa_micros": observed_cpa_micros,
+        "observed_roas": (
+            round(observed_roas, 4) if observed_roas is not None else None
+        ),
     }
 
 
@@ -216,6 +236,62 @@ def build_goal_suggestion(
         "basis": "no_enabled_campaign_has_this_configured_target",
     }
     if not candidates:
+        observed_field = (
+            "observed_cpa_micros"
+            if goal_type == "target_cpa"
+            else "observed_roas"
+        )
+        observed = [
+            item
+            for item in enabled
+            if int(item["spend_micros"]) > 0
+            and item.get(observed_field) is not None
+        ]
+        if not observed:
+            return common
+        observed_spend = sum(int(item["spend_micros"]) for item in observed)
+        common.update(
+            {
+                "status": "reference_only",
+                "source": "observed_google_ads_performance",
+                "campaign_count": len(observed),
+                "campaign_ids": [
+                    str(item["campaign_id"]) for item in observed
+                ],
+                "spend_coverage_percent": (
+                    round(observed_spend * 100 / total_enabled_spend, 1)
+                    if total_enabled_spend > 0
+                    else None
+                ),
+            }
+        )
+        if goal_type == "target_cpa":
+            total_conversions = sum(
+                float(item["reported_conversions"]) for item in observed
+            )
+            observed_cpa_micros = int(round(observed_spend / total_conversions))
+            common["target_cpa_micros"] = observed_cpa_micros
+            common["display_value"] = (
+                f"{currency} {observed_cpa_micros / 1_000_000:,.2f}"
+            )
+            common["basis"] = (
+                "reported_actual_cpa_no_configured_target"
+            )
+        else:
+            total_conversion_value = sum(
+                float(item["reported_conversion_value"]) for item in observed
+            )
+            observed_roas = total_conversion_value / (
+                observed_spend / 1_000_000
+            )
+            common["target_roas"] = round(observed_roas, 4)
+            common["target_roas_percent"] = round(observed_roas * 100, 2)
+            common["display_value"] = (
+                f"{observed_roas:.2f}× ({round(observed_roas * 100, 2):g}%)"
+            )
+            common["basis"] = (
+                "reported_actual_roas_no_configured_target"
+            )
         return common
 
     weighted = [
@@ -261,6 +337,7 @@ def build_goal_context(
     campaign_rows: Sequence[Any],
     *,
     spend_by_campaign: Mapping[str, int],
+    performance_by_campaign: Mapping[str, Mapping[str, Any]] | None = None,
     bidding_strategy_rows: Sequence[Any],
     accessible_strategy_rows: Sequence[Any],
     business_mode: str,
@@ -278,6 +355,16 @@ def build_goal_context(
         campaign_goal(
             row.campaign,
             spend_micros=spend_by_campaign.get(str(row.campaign.id), 0),
+            reported_conversions=float(
+                (performance_by_campaign or {})
+                .get(str(row.campaign.id), {})
+                .get("conversions", 0)
+            ),
+            reported_conversion_value=float(
+                (performance_by_campaign or {})
+                .get(str(row.campaign.id), {})
+                .get("conversion_value", 0)
+            ),
             portfolio_strategies=strategies,
         )
         for row in campaign_rows

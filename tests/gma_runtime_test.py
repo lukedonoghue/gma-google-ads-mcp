@@ -86,11 +86,19 @@ class ScopeQueryService:
             return [
                 SimpleNamespace(
                     campaign=SimpleNamespace(id=202),
-                    metrics=SimpleNamespace(cost_micros=200_000_000),
+                    metrics=SimpleNamespace(
+                        cost_micros=200_000_000,
+                        conversions=10,
+                        conversions_value=0,
+                    ),
                 ),
                 SimpleNamespace(
                     campaign=SimpleNamespace(id=303),
-                    metrics=SimpleNamespace(cost_micros=200_000_000),
+                    metrics=SimpleNamespace(
+                        cost_micros=200_000_000,
+                        conversions=4,
+                        conversions_value=0,
+                    ),
                 ),
             ]
         if "FROM campaign WHERE" in query:

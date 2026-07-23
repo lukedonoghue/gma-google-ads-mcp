@@ -16,9 +16,9 @@ from ads_mcp.goal_targets import build_goal_context
 from ads_mcp.skill_runs.budget_service import BudgetReallocatorRunService
 from ads_mcp.skill_runs.common import resolve_analysis_window, trailing_complete_days
 
-RUNTIME_VERSION = "1.0.0-alpha.2"
+RUNTIME_VERSION = "1.0.0-alpha.3"
 METHODOLOGY_VERSIONS = {"budget_reallocator": "gma-budget-v1.0.0"}
-EXPECTED_PLUGIN_VERSION = "0.5.1"
+EXPECTED_PLUGIN_VERSION = "0.5.2"
 SCOPE_TTL_SECONDS = 24 * 60 * 60
 RUN_TTL_SECONDS = 90 * 24 * 60 * 60
 MODULES = {
@@ -634,13 +634,21 @@ class ScopeGateway:
         spend_rows = self._search(
             service,
             customer,
-            "SELECT campaign.id, metrics.cost_micros FROM campaign "
+            "SELECT campaign.id, metrics.conversions, metrics.conversions_value, "
+            "metrics.cost_micros FROM campaign "
             f"WHERE segments.date BETWEEN '{selector_start}' AND '{selector_end}' "
             "AND campaign.status != 'REMOVED'"
             f"{campaign_filter} LIMIT 500",
         )
         spend_by_campaign = {
             str(row.campaign.id): int(row.metrics.cost_micros) for row in spend_rows
+        }
+        performance_by_campaign = {
+            str(row.campaign.id): {
+                "conversions": float(row.metrics.conversions),
+                "conversion_value": float(row.metrics.conversions_value),
+            }
+            for row in spend_rows
         }
         campaign_rows = sorted(
             inventory_rows,
@@ -731,6 +739,7 @@ class ScopeGateway:
         goal_context = build_goal_context(
             campaign_rows,
             spend_by_campaign=spend_by_campaign,
+            performance_by_campaign=performance_by_campaign,
             bidding_strategy_rows=bidding_strategy_rows,
             accessible_strategy_rows=accessible_strategy_rows,
             business_mode=selected_business_mode,
