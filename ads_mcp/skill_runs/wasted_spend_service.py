@@ -75,7 +75,6 @@ class GoogleAdsWastedSpendGateway(GoogleAdsBudgetGateway):
         order_by: str,
         metric_filter: str,
         lane: str,
-        statuses: Mapping[tuple[str, str], str],
         gaps: list[str],
     ) -> list[dict[str, Any]]:
         query = (
@@ -133,6 +132,7 @@ class GoogleAdsWastedSpendGateway(GoogleAdsBudgetGateway):
         order_by: str,
         metric_filter: str,
         lane: str,
+        statuses: Mapping[tuple[str, str], str],
         gaps: list[str],
     ) -> list[dict[str, Any]]:
         query = (

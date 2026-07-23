@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import unittest
+from inspect import signature
 
-from ads_mcp.skill_runs.wasted_spend_service import WastedSpendFinderRunService
+from ads_mcp.skill_runs.wasted_spend_service import (
+    GoogleAdsWastedSpendGateway,
+    WastedSpendFinderRunService,
+)
 
 
 class FakeGateway:
@@ -69,6 +73,16 @@ class FakeChangesets:
 
 
 class WastedSpendServiceTest(unittest.IsolatedAsyncioTestCase):
+    def test_pmax_status_map_is_required_only_by_the_pmax_query(self):
+        self.assertNotIn(
+            "statuses",
+            signature(GoogleAdsWastedSpendGateway._search_term_rows).parameters,
+        )
+        self.assertIn(
+            "statuses",
+            signature(GoogleAdsWastedSpendGateway._pmax_rows).parameters,
+        )
+
     async def test_service_creates_read_only_tasks_from_authoritative_result(
         self,
     ):
