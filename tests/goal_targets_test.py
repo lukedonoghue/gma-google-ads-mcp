@@ -185,6 +185,16 @@ class GoalTargetsTest(unittest.TestCase):
                 reported_conversions=5,
                 portfolio_strategies={},
             ),
+            campaign_goal(
+                campaign(
+                    303,
+                    "Lead Search No Conversions",
+                    strategy_type="MAXIMIZE_CONVERSIONS",
+                ),
+                spend_micros=100_000_000,
+                reported_conversions=0,
+                portfolio_strategies={},
+            ),
         ]
         result = build_goal_suggestion(
             goals,
@@ -194,8 +204,10 @@ class GoalTargetsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "reference_only")
         self.assertEqual(result["source"], "observed_google_ads_performance")
-        self.assertEqual(result["target_cpa_micros"], 40_000_000)
-        self.assertEqual(result["display_value"], "USD 40.00")
+        self.assertEqual(result["target_cpa_micros"], 44_000_000)
+        self.assertEqual(result["display_value"], "USD 44.00")
+        self.assertEqual(result["campaign_count"], 3)
+        self.assertEqual(result["spend_coverage_percent"], 100.0)
         self.assertEqual(
             result["basis"], "reported_actual_cpa_no_configured_target"
         )
@@ -255,7 +267,9 @@ class GoalTargetsTest(unittest.TestCase):
         self.assertEqual(
             result["selected_suggestion"]["target_cpa_micros"], 60_000_000
         )
-        self.assertEqual(result["suggestions"]["ecommerce"]["status"], "unavailable")
+        self.assertEqual(
+            result["suggestions"]["ecommerce"]["status"], "unavailable"
+        )
 
 
 if __name__ == "__main__":

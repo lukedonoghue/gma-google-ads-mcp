@@ -14,7 +14,9 @@ from ads_mcp.gma_runtime import (
     EXPECTED_PLUGIN_VERSION,
     GmaRuntimeError,
     ScopeGateway,
+    build_goal_report,
     get_run,
+    list_goal_benchmarks,
     preflight,
     render_run,
     run_skill,
@@ -112,9 +114,13 @@ class ScopeQueryService:
                         bidding_strategy="",
                         bidding_strategy_type="MAXIMIZE_CONVERSIONS",
                         target_cpa=SimpleNamespace(target_cpa_micros=0),
-                        maximize_conversions=SimpleNamespace(target_cpa_micros=0),
+                        maximize_conversions=SimpleNamespace(
+                            target_cpa_micros=0
+                        ),
                         target_roas=SimpleNamespace(target_roas=0),
-                        maximize_conversion_value=SimpleNamespace(target_roas=0),
+                        maximize_conversion_value=SimpleNamespace(
+                            target_roas=0
+                        ),
                     )
                 ),
                 SimpleNamespace(
@@ -128,9 +134,13 @@ class ScopeQueryService:
                         target_cpa=SimpleNamespace(
                             target_cpa_micros=10_000_000
                         ),
-                        maximize_conversions=SimpleNamespace(target_cpa_micros=0),
+                        maximize_conversions=SimpleNamespace(
+                            target_cpa_micros=0
+                        ),
                         target_roas=SimpleNamespace(target_roas=0),
-                        maximize_conversion_value=SimpleNamespace(target_roas=0),
+                        maximize_conversion_value=SimpleNamespace(
+                            target_roas=0
+                        ),
                     )
                 ),
                 SimpleNamespace(
@@ -144,9 +154,13 @@ class ScopeQueryService:
                         target_cpa=SimpleNamespace(
                             target_cpa_micros=50_000_000
                         ),
-                        maximize_conversions=SimpleNamespace(target_cpa_micros=0),
+                        maximize_conversions=SimpleNamespace(
+                            target_cpa_micros=0
+                        ),
                         target_roas=SimpleNamespace(target_roas=0),
-                        maximize_conversion_value=SimpleNamespace(target_roas=0),
+                        maximize_conversion_value=SimpleNamespace(
+                            target_roas=0
+                        ),
                     )
                 ),
             ]
@@ -203,7 +217,9 @@ def campaign_check(campaign_id, name, *, recipient=False, donor=False):
         "status": "ENABLED",
         "channel_type": "SEARCH",
         "efficiency": {"status": "profitable", "actual": 40, "target": 50},
-        "constraint": "budget_limited" if recipient else "not_materially_limited",
+        "constraint": (
+            "budget_limited" if recipient else "not_materially_limited"
+        ),
         "recipient_eligible": recipient,
         "donor_eligible": donor,
         "holds": [],
@@ -299,7 +315,9 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         return prepared
 
-    def test_account_discovery_returns_only_advertisers_inside_access_root(self):
+    def test_account_discovery_returns_only_advertisers_inside_access_root(
+        self,
+    ):
         service = AccountQueryService()
         with (
             patch(
@@ -320,10 +338,14 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [item["customer_id"] for item in result["accounts"]], ["1234567890"]
         )
-        self.assertEqual(result["accounts"][0]["login_customer_id"], "9876543210")
+        self.assertEqual(
+            result["accounts"][0]["login_customer_id"], "9876543210"
+        )
         self.assertFalse(result["selection_required"])
 
-    def test_scope_keeps_paused_and_zero_spend_campaigns_and_sorts_on_fixed_30d_spend(self):
+    def test_scope_keeps_paused_and_zero_spend_campaigns_and_sorts_on_fixed_30d_spend(
+        self,
+    ):
         service = ScopeQueryService()
         with (
             patch(
@@ -345,8 +367,12 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ["Enabled Spender", "Paused Spender", "Zero Spend"],
         )
         self.assertEqual(result["scope"]["campaigns"][2]["spend_micros"], 0)
-        self.assertEqual(result["scope"]["campaign_spend_window_start"], "2026-06-22")
-        self.assertEqual(result["scope"]["campaign_spend_window_end"], "2026-07-21")
+        self.assertEqual(
+            result["scope"]["campaign_spend_window_start"], "2026-06-22"
+        )
+        self.assertEqual(
+            result["scope"]["campaign_spend_window_end"], "2026-07-21"
+        )
         suggestion = result["scope"]["goal_context"]["selected_suggestion"]
         self.assertEqual(suggestion["target_cpa_micros"], 50_000_000)
         self.assertEqual(suggestion["campaign_ids"], ["303"])
@@ -362,7 +388,9 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             inventory_query,
         )
         spend_query = next(
-            query for query in service.queries if "metrics.cost_micros FROM campaign" in query
+            query
+            for query in service.queries
+            if "metrics.cost_micros FROM campaign" in query
         )
         self.assertIn("BETWEEN '2026-06-22' AND '2026-07-21'", spend_query)
         self.assertNotIn("2026-01-01", spend_query)
@@ -370,7 +398,8 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
     def test_preflight_makes_stale_host_package_visible(self):
         result = preflight("0.2.3")
         self.assertEqual(
-            result["connector"]["expected_plugin_version"], EXPECTED_PLUGIN_VERSION
+            result["connector"]["expected_plugin_version"],
+            EXPECTED_PLUGIN_VERSION,
         )
         self.assertFalse(result["connector"]["package_match"])
         available = [
@@ -413,7 +442,9 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             result["run_id"], store=self.store, owner_resolver=self.owner
         )
         self.assertIn("# Skill 12 — Budget Reallocator", rendered["content"])
-        self.assertIn("Google Ads has **not** been changed", rendered["content"])
+        self.assertIn(
+            "Google Ads has **not** been changed", rendered["content"]
+        )
 
     async def test_run_rejects_a_scope_hash_the_user_did_not_confirm(self):
         prepared = await self._save_scope()
@@ -426,6 +457,52 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 store=self.store,
                 owner_resolver=self.owner,
             )
+
+    async def test_goal_report_uses_confirmed_owner_bound_scope(self):
+        scope_value = prepared_scope()
+        scope_value["campaign_spend_window_start"] = "2026-06-21"
+        scope_value["campaign_spend_window_end"] = "2026-07-20"
+        scope_value["goal_context"] = {
+            "campaign_goals": [
+                {
+                    "campaign_id": "101",
+                    "status": "ENABLED",
+                    "spend_micros": 70_000_000,
+                    "reported_conversions": 2,
+                    "reported_conversion_value": 0,
+                }
+            ],
+            "coverage_gaps": [],
+        }
+        scope_hash = "d" * 64
+        await save_prepared_scope(
+            {
+                "contract_version": "gma-scope/1.0",
+                "scope_id": f"scope_{scope_hash[:24]}",
+                "scope_hash": scope_hash,
+                "scope": scope_value,
+                "confirmation_required": True,
+            },
+            store=self.store,
+            owner_resolver=self.owner,
+        )
+
+        catalog = list_goal_benchmarks("lead_gen")
+        self.assertIn(
+            "spa_wellness",
+            [item["id"] for item in catalog["profiles"]],
+        )
+        report = await build_goal_report(
+            scope_id=f"scope_{scope_hash[:24]}",
+            confirmed_scope_hash=scope_hash,
+            industry_profile_id="spa_wellness",
+            confirmed_target_cpa=50,
+            store=self.store,
+            owner_resolver=self.owner,
+        )
+        self.assertEqual(report["account_reference"]["value"], 35)
+        self.assertEqual(report["confirmed_goal"]["value"], 50)
+        self.assertTrue(report["read_only"])
 
     async def test_unported_module_fails_instead_of_using_prompt_fallback(self):
         prepared = await self._save_scope()
@@ -454,7 +531,9 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             store=self.store,
             owner_resolver=self.owner,
         )
-        with self.assertRaisesRegex(GmaRuntimeError, "separate ecommerce and lead-gen"):
+        with self.assertRaisesRegex(
+            GmaRuntimeError, "separate ecommerce and lead-gen"
+        ):
             await run_skill(
                 module_id="budget_reallocator",
                 scope_id=f"scope_{scope_hash[:24]}",

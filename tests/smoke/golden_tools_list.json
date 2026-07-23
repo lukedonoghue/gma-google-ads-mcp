@@ -268,6 +268,79 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
+      "description": "Compare a confirmed goal with live results and sourced industry context.\n\nThis report is read-only. The user-confirmed target stays authoritative;\nindustry averages are advisory and are never written to Google Ads.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmed_scope_hash": {
+            "type": "string"
+          },
+          "confirmed_target_cpa": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confirmed_target_roas": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "economics": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "industry_profile_id": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope_id",
+          "confirmed_scope_hash",
+          "industry_profile_id"
+        ],
+        "type": "object"
+      },
+      "name": "gma_build_goal_report",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Return a persisted, owner-bound, schema-validated GMA run result.",
       "inputSchema": {
         "additionalProperties": false,
@@ -306,6 +379,37 @@
         "type": "object"
       },
       "name": "gma_list_accounts",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List source-labelled industry categories for a CPA or ROAS comparison.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "business_mode": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "business_mode"
+        ],
+        "type": "object"
+      },
+      "name": "gma_list_goal_benchmarks",
       "outputSchema": {
         "additionalProperties": true,
         "type": "object"

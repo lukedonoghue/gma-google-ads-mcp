@@ -60,7 +60,8 @@ def normalize_portfolio_strategies(
             "entity": entity,
             "source": source,
             "name": str(getattr(entity, "name", "") or "") or None,
-            "resource_name": str(getattr(entity, "resource_name", "") or "") or None,
+            "resource_name": str(getattr(entity, "resource_name", "") or "")
+            or None,
             "strategy_type": _enum(
                 getattr(entity, "type_", getattr(entity, "type", "UNSPECIFIED"))
             ),
@@ -91,7 +92,9 @@ def _configured_target(
             None,
         )
     if strategy_type == "TARGET_ROAS":
-        target_roas = _positive_float(_nested(entity, "target_roas", "target_roas"))
+        target_roas = _positive_float(
+            _nested(entity, "target_roas", "target_roas")
+        )
         return ("target_roas" if target_roas else "none", None, target_roas)
     if strategy_type == "MAXIMIZE_CONVERSION_VALUE":
         target_roas = _positive_float(
@@ -111,9 +114,13 @@ def campaign_goal(
 ) -> dict[str, Any]:
     """Return one campaign's configured bidding target without judging its value."""
 
-    strategy_type = _enum(getattr(campaign, "bidding_strategy_type", "UNSPECIFIED"))
+    strategy_type = _enum(
+        getattr(campaign, "bidding_strategy_type", "UNSPECIFIED")
+    )
     portfolio_resource = str(getattr(campaign, "bidding_strategy", "") or "")
-    portfolio_id = portfolio_resource.rsplit("/", 1)[-1] if portfolio_resource else ""
+    portfolio_id = (
+        portfolio_resource.rsplit("/", 1)[-1] if portfolio_resource else ""
+    )
     portfolio = portfolio_strategies.get(portfolio_id)
 
     entity = campaign
@@ -124,7 +131,9 @@ def campaign_goal(
         entity = portfolio["entity"]
         source = str(portfolio["source"])
         strategy_name = portfolio.get("name")
-        strategy_resource_name = portfolio.get("resource_name") or portfolio_resource
+        strategy_resource_name = (
+            portfolio.get("resource_name") or portfolio_resource
+        )
         strategy_type = str(portfolio.get("strategy_type") or strategy_type)
     elif portfolio_resource:
         source = "portfolio_unavailable"
@@ -157,8 +166,14 @@ def campaign_goal(
         "target_roas_percent": (
             round(target_roas * 100, 2) if target_roas is not None else None
         ),
-        "source": source if goal_type != "none" else (
-            source if source == "portfolio_unavailable" else "not_configured"
+        "source": (
+            source
+            if goal_type != "none"
+            else (
+                source
+                if source == "portfolio_unavailable"
+                else "not_configured"
+            )
         ),
         "strategy_name": strategy_name,
         "strategy_resource_name": strategy_resource_name,
@@ -236,28 +251,26 @@ def build_goal_suggestion(
         "basis": "no_enabled_campaign_has_this_configured_target",
     }
     if not candidates:
-        observed_field = (
-            "observed_cpa_micros"
-            if goal_type == "target_cpa"
-            else "observed_roas"
-        )
-        observed = [
-            item
-            for item in enabled
-            if int(item["spend_micros"]) > 0
-            and item.get(observed_field) is not None
-        ]
+        observed = [item for item in enabled if int(item["spend_micros"]) > 0]
         if not observed:
             return common
         observed_spend = sum(int(item["spend_micros"]) for item in observed)
+        total_conversions = sum(
+            float(item["reported_conversions"]) for item in observed
+        )
+        total_conversion_value = sum(
+            float(item["reported_conversion_value"]) for item in observed
+        )
+        if (goal_type == "target_cpa" and total_conversions <= 0) or (
+            goal_type == "target_roas" and total_conversion_value <= 0
+        ):
+            return common
         common.update(
             {
                 "status": "reference_only",
                 "source": "observed_google_ads_performance",
                 "campaign_count": len(observed),
-                "campaign_ids": [
-                    str(item["campaign_id"]) for item in observed
-                ],
+                "campaign_ids": [str(item["campaign_id"]) for item in observed],
                 "spend_coverage_percent": (
                     round(observed_spend * 100 / total_enabled_spend, 1)
                     if total_enabled_spend > 0
@@ -266,21 +279,13 @@ def build_goal_suggestion(
             }
         )
         if goal_type == "target_cpa":
-            total_conversions = sum(
-                float(item["reported_conversions"]) for item in observed
-            )
             observed_cpa_micros = int(round(observed_spend / total_conversions))
             common["target_cpa_micros"] = observed_cpa_micros
             common["display_value"] = (
                 f"{currency} {observed_cpa_micros / 1_000_000:,.2f}"
             )
-            common["basis"] = (
-                "reported_actual_cpa_no_configured_target"
-            )
+            common["basis"] = "reported_actual_cpa_no_configured_target"
         else:
-            total_conversion_value = sum(
-                float(item["reported_conversion_value"]) for item in observed
-            )
             observed_roas = total_conversion_value / (
                 observed_spend / 1_000_000
             )
@@ -289,9 +294,7 @@ def build_goal_suggestion(
             common["display_value"] = (
                 f"{observed_roas:.2f}× ({round(observed_roas * 100, 2):g}%)"
             )
-            common["basis"] = (
-                "reported_actual_roas_no_configured_target"
-            )
+            common["basis"] = "reported_actual_roas_no_configured_target"
         return common
 
     weighted = [

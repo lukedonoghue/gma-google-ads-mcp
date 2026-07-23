@@ -13,7 +13,9 @@ from ads_mcp.gma_runtime import (
     AccountGateway,
     GmaRuntimeError,
     ScopeGateway,
+    build_goal_report as build_gma_goal_report,
     get_run as get_gma_run,
+    list_goal_benchmarks as list_gma_goal_benchmarks,
     preflight as build_preflight,
     render_run as render_gma_run,
     run_skill as run_gma_skill,
@@ -91,6 +93,58 @@ async def prepare_scope(
     annotations=ToolAnnotations(
         readOnlyHint=True,
         destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def list_goal_benchmarks(business_mode: str) -> dict[str, Any]:
+    """List source-labelled industry categories for a CPA or ROAS comparison."""
+
+    try:
+        return list_gma_goal_benchmarks(business_mode)
+    except (GmaRuntimeError, ValueError) as error:
+        raise ToolError(str(error)) from error
+
+
+@gma_mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+async def build_goal_report(
+    scope_id: str,
+    confirmed_scope_hash: str,
+    industry_profile_id: str,
+    confirmed_target_cpa: float | None = None,
+    confirmed_target_roas: float | None = None,
+    economics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Compare a confirmed goal with live results and sourced industry context.
+
+    This report is read-only. The user-confirmed target stays authoritative;
+    industry averages are advisory and are never written to Google Ads.
+    """
+
+    try:
+        return await build_gma_goal_report(
+            scope_id=scope_id,
+            confirmed_scope_hash=confirmed_scope_hash,
+            industry_profile_id=industry_profile_id,
+            confirmed_target_cpa=confirmed_target_cpa,
+            confirmed_target_roas=confirmed_target_roas,
+            economics=economics,
+        )
+    except (GmaRuntimeError, ValueError) as error:
+        raise ToolError(str(error)) from error
+
+
+@gma_mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
         idempotentHint=False,
         openWorldHint=True,
     )
@@ -115,7 +169,12 @@ async def run_skill(
             confirmed_scope_hash=confirmed_scope_hash,
             business_inputs=business_inputs,
         )
-    except (GmaRuntimeError, BudgetAnalysisError, ChangesetError, ValueError) as error:
+    except (
+        GmaRuntimeError,
+        BudgetAnalysisError,
+        ChangesetError,
+        ValueError,
+    ) as error:
         raise ToolError(str(error)) from error
 
 

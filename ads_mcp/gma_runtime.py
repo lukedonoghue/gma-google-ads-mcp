@@ -12,13 +12,18 @@ from typing import Any, Mapping, Sequence
 from ads_mcp import utils
 from ads_mcp.changeset_store import AsyncChangesetStore, get_changeset_store
 from ads_mcp.changesets import current_identity_owner_id, get_changeset_service
+from ads_mcp.goal_report import build_goal_report as build_goal_report_result
 from ads_mcp.goal_targets import build_goal_context
+from ads_mcp.industry_benchmarks import list_benchmark_profiles
 from ads_mcp.skill_runs.budget_service import BudgetReallocatorRunService
-from ads_mcp.skill_runs.common import resolve_analysis_window, trailing_complete_days
+from ads_mcp.skill_runs.common import (
+    resolve_analysis_window,
+    trailing_complete_days,
+)
 
-RUNTIME_VERSION = "1.0.0-alpha.3"
+RUNTIME_VERSION = "1.0.0-alpha.4"
 METHODOLOGY_VERSIONS = {"budget_reallocator": "gma-budget-v1.0.0"}
-EXPECTED_PLUGIN_VERSION = "0.5.2"
+EXPECTED_PLUGIN_VERSION = "0.6.0"
 SCOPE_TTL_SECONDS = 24 * 60 * 60
 RUN_TTL_SECONDS = 90 * 24 * 60 * 60
 MODULES = {
@@ -99,7 +104,9 @@ async def get_prepared_scope(
     if not re.fullmatch(r"[a-f0-9]{64}", confirmed_scope_hash or ""):
         raise GmaRuntimeError("A confirmed scope hash is required")
     if value.get("scope_hash") != confirmed_scope_hash:
-        raise GmaRuntimeError("The confirmed scope does not match the prepared scope")
+        raise GmaRuntimeError(
+            "The confirmed scope does not match the prepared scope"
+        )
     return deepcopy(dict(value["scope"]))
 
 
@@ -140,7 +147,9 @@ def _enum(value: Any) -> str:
 
 
 def _core_signature(result: Mapping[str, Any]) -> str:
-    core = {key: value for key, value in result.items() if key != "core_signature"}
+    core = {
+        key: value for key, value in result.items() if key != "core_signature"
+    }
     return hashlib.sha256(
         json.dumps(core, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -219,7 +228,9 @@ def render_run_result(result: Mapping[str, Any]) -> str:
             why = _text(check.get("constraint"))
         if routes:
             why += "; review with " + ", ".join(_text(item) for item in routes)
-        lines.append(f"| {_text(check.get('campaign_name'))} | {decision} | {why} |")
+        lines.append(
+            f"| {_text(check.get('campaign_name'))} | {decision} | {why} |"
+        )
 
     lines.extend(["", "## Suggested changes", ""])
     recommendations = result["recommendations"]
@@ -254,7 +265,9 @@ def render_run_result(result: Mapping[str, Any]) -> str:
     if gaps:
         lines.extend(f"- {_text(gap)}" for gap in gaps)
     else:
-        lines.append("No API coverage gaps were recorded for this selected scope.")
+        lines.append(
+            "No API coverage gaps were recorded for this selected scope."
+        )
     change_plan = result.get("change_plan") or {}
     lines.extend(
         [
@@ -292,7 +305,9 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
     }
     missing = sorted(required.difference(result))
     if missing:
-        raise GmaRuntimeError("Runtime result is missing: " + ", ".join(missing))
+        raise GmaRuntimeError(
+            "Runtime result is missing: " + ", ".join(missing)
+        )
     unknown = sorted(set(result).difference(required))
     if unknown:
         raise GmaRuntimeError(
@@ -350,7 +365,9 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
         start = date.fromisoformat(str(scope["analysis_start"]))
         end = date.fromisoformat(str(scope["analysis_end"]))
     except ValueError as error:
-        raise GmaRuntimeError("Runtime scope has invalid analysis dates") from error
+        raise GmaRuntimeError(
+            "Runtime scope has invalid analysis dates"
+        ) from error
     if end < start:
         raise GmaRuntimeError("Runtime scope analysis dates are reversed")
     if not isinstance(scope["campaigns"], list) or not scope["campaigns"]:
@@ -390,16 +407,15 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
     if not isinstance(coverage["gaps"], list):
         raise GmaRuntimeError("Runtime coverage gaps must be a list")
     spend_coverage = coverage["spend_coverage_percent"]
-    if (
-        spend_coverage is not None
-        and (
-            isinstance(spend_coverage, bool)
-            or not isinstance(spend_coverage, (int, float))
-            or spend_coverage < 0
-            or spend_coverage > 100
-        )
+    if spend_coverage is not None and (
+        isinstance(spend_coverage, bool)
+        or not isinstance(spend_coverage, (int, float))
+        or spend_coverage < 0
+        or spend_coverage > 100
     ):
-        raise GmaRuntimeError("Runtime spend coverage must be between 0 and 100")
+        raise GmaRuntimeError(
+            "Runtime spend coverage must be between 0 and 100"
+        )
 
     if not isinstance(result["checks"], list) or not result["checks"]:
         raise GmaRuntimeError("Runtime result must contain checks")
@@ -430,7 +446,9 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
         if not isinstance(check["holds"], list) or not isinstance(
             check["routes"], list
         ):
-            raise GmaRuntimeError("Runtime check holds and routes must be lists")
+            raise GmaRuntimeError(
+                "Runtime check holds and routes must be lists"
+            )
 
     assessment = result["assessment"]
     if not isinstance(assessment, Mapping) or set(assessment) != {
@@ -468,10 +486,14 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
             not isinstance(recommendation, Mapping)
             or set(recommendation) != recommendation_fields
         ):
-            raise GmaRuntimeError("Runtime result contains an invalid recommendation")
+            raise GmaRuntimeError(
+                "Runtime result contains an invalid recommendation"
+            )
         action_id = str(recommendation.get("id", ""))
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", action_id):
-            raise GmaRuntimeError("Runtime recommendation has an invalid action ID")
+            raise GmaRuntimeError(
+                "Runtime recommendation has an invalid action ID"
+            )
         if recommendation.get("applyability") not in RECOMMENDATION_TYPES:
             raise GmaRuntimeError(
                 f"Runtime recommendation {action_id} has invalid applyability"
@@ -573,7 +595,9 @@ class ScopeGateway:
             "customer.currency_code, customer.time_zone FROM customer LIMIT 1",
         )
         if len(rows) != 1:
-            raise GmaRuntimeError("The advertiser account could not be resolved")
+            raise GmaRuntimeError(
+                "The advertiser account could not be resolved"
+            )
         account = rows[0].customer
         if account.manager:
             raise GmaRuntimeError(
@@ -618,7 +642,9 @@ class ScopeGateway:
             f"{campaign_filter} ORDER BY campaign.name LIMIT 500",
         )
         if not inventory_rows:
-            raise GmaRuntimeError("No campaigns were found in the selected scope")
+            raise GmaRuntimeError(
+                "No campaigns were found in the selected scope"
+            )
         inventory_ids = {str(row.campaign.id) for row in inventory_rows}
         missing_selected = sorted(set(selected_ids).difference(inventory_ids))
         if missing_selected:
@@ -641,7 +667,8 @@ class ScopeGateway:
             f"{campaign_filter} LIMIT 500",
         )
         spend_by_campaign = {
-            str(row.campaign.id): int(row.metrics.cost_micros) for row in spend_rows
+            str(row.campaign.id): int(row.metrics.cost_micros)
+            for row in spend_rows
         }
         performance_by_campaign = {
             str(row.campaign.id): {
@@ -755,7 +782,9 @@ class ScopeGateway:
             "time_zone": time_zone,
             "analysis_start": start.isoformat(),
             "analysis_end": end.isoformat(),
-            "analysis_label": "Last 30 days" if (end - start).days == 29 else "Custom",
+            "analysis_label": (
+                "Last 30 days" if (end - start).days == 29 else "Custom"
+            ),
             "campaign_scope": "selected" if selected_ids else "all_eligible",
             "campaigns": [
                 {
@@ -763,7 +792,9 @@ class ScopeGateway:
                     "name": row.campaign.name,
                     "type": _enum(row.campaign.advertising_channel_type),
                     "status": _enum(row.campaign.status),
-                    "spend_micros": spend_by_campaign.get(str(row.campaign.id), 0),
+                    "spend_micros": spend_by_campaign.get(
+                        str(row.campaign.id), 0
+                    ),
                 }
                 for row in campaign_rows
             ],
@@ -807,7 +838,8 @@ class AccountGateway:
             customer_service = utils.get_googleads_service("CustomerService")
             response = customer_service.list_accessible_customers()
             root_ids = [
-                value.removeprefix("customers/") for value in response.resource_names
+                value.removeprefix("customers/")
+                for value in response.resource_names
             ]
         if not root_ids:
             raise GmaRuntimeError(
@@ -821,7 +853,9 @@ class AccountGateway:
                 service = utils.get_googleads_service(
                     "GoogleAdsService",
                     login_customer_id=(
-                        root_id if root_id in {access_root, enforced_login} else None
+                        root_id
+                        if root_id in {access_root, enforced_login}
+                        else None
                     ),
                 )
                 rows = self._search(
@@ -911,7 +945,9 @@ def preflight(host_package_version: str | None = None) -> dict[str, Any]:
                 "number": data[0],
                 "name": data[1],
                 "runtime_status": (
-                    "available" if module_id in MODULE_HANDLERS else "not_yet_ported"
+                    "available"
+                    if module_id in MODULE_HANDLERS
+                    else "not_yet_ported"
                 ),
             }
             for module_id, data in MODULES.items()
@@ -940,13 +976,55 @@ async def _run_budget_reallocator(
         business_mode=business_mode,
         target_cpa=inputs.get("target_cpa"),
         target_roas=inputs.get("target_roas"),
-        outcome_quality_confirmed=bool(inputs.get("outcome_quality_confirmed", False)),
+        outcome_quality_confirmed=bool(
+            inputs.get("outcome_quality_confirmed", False)
+        ),
         analysis_start=str(scope["analysis_start"]),
         analysis_end=str(scope["analysis_end"]),
         campaign_ids=[str(item["id"]) for item in scope["campaigns"]],
         monthly_budget=inputs.get("monthly_budget"),
         allow_net_increase=bool(inputs.get("allow_net_increase", False)),
     )
+
+
+def list_goal_benchmarks(business_mode: str) -> dict[str, Any]:
+    """Return source-labelled benchmark categories for one business mode."""
+
+    try:
+        return list_benchmark_profiles(business_mode)
+    except ValueError as error:
+        raise GmaRuntimeError(str(error)) from error
+
+
+async def build_goal_report(
+    *,
+    scope_id: str,
+    confirmed_scope_hash: str,
+    industry_profile_id: str,
+    confirmed_target_cpa: Any = None,
+    confirmed_target_roas: Any = None,
+    economics: Mapping[str, Any] | None = None,
+    store: AsyncChangesetStore | None = None,
+    owner_resolver=None,
+) -> dict[str, Any]:
+    """Build an owner-bound, read-only Goal Benchmark Report."""
+
+    scope = await get_prepared_scope(
+        scope_id,
+        confirmed_scope_hash,
+        store=store,
+        owner_resolver=owner_resolver,
+    )
+    try:
+        return build_goal_report_result(
+            scope,
+            industry_profile_id=industry_profile_id,
+            confirmed_target_cpa=confirmed_target_cpa,
+            confirmed_target_roas=confirmed_target_roas,
+            economics=economics,
+        )
+    except ValueError as error:
+        raise GmaRuntimeError(str(error)) from error
 
 
 MODULE_HANDLERS = {"budget_reallocator": _run_budget_reallocator}
@@ -989,7 +1067,9 @@ async def run_skill(
     }
     missing = sorted(required_scope.difference(scope))
     if missing:
-        raise GmaRuntimeError("Prepared scope is missing: " + ", ".join(missing))
+        raise GmaRuntimeError(
+            "Prepared scope is missing: " + ", ".join(missing)
+        )
     inputs = dict(business_inputs or {})
     business_mode = str(scope["business_mode"])
     raw = await handler(scope, inputs)
