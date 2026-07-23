@@ -355,6 +355,89 @@ class FakeBlockedBudgetService:
         return result
 
 
+class FakeRedFlagService:
+    async def run(self, **_kwargs):
+        return {
+            "status": "findings_ready",
+            "conclusion": "One material warning needs review.",
+            "campaigns_analyzed": 2,
+            "checks": [
+                {
+                    "id": "RF-POLICY-101",
+                    "campaign_id": "101",
+                    "campaign_name": "Search | Weak",
+                    "criterion": "Active ad policy eligibility",
+                    "status": "warning",
+                    "evidence": "One active ad is eligible with limitations.",
+                    "why_it_matters": "Policy limitations can reduce reach.",
+                    "decision": "Review the limited ad.",
+                    "next_step": "Open Policy details and prepare a compliant replacement.",
+                    "metrics": {"limited_ads": 1},
+                    "source": "live_google_ads",
+                },
+                {
+                    "id": "RF-TREND-202",
+                    "campaign_id": "202",
+                    "campaign_name": "Search | Proven",
+                    "criterion": "Latest complete 7 days versus previous 7 days",
+                    "status": "healthy",
+                    "evidence": "No threshold was crossed.",
+                    "why_it_matters": "Weekly changes reveal emerging issues.",
+                    "decision": "No material movement.",
+                    "next_step": "Rerun after the next complete week.",
+                    "metrics": {"evidence_floor_met": True},
+                    "source": "calculated",
+                },
+            ],
+            "recommendations": [
+                {
+                    "id": "RF-001",
+                    "priority": 2,
+                    "severity": "warning",
+                    "evidence_label": "Calculated from live Google Ads data",
+                    "entity": "Review the policy-limited ad",
+                    "resource_name": "",
+                    "operation_type": "advisory",
+                    "current_value": {},
+                    "proposed_value": {},
+                    "reason": "The active ad is eligible with limitations.",
+                    "evidence_summary": "One limited active ad.",
+                    "details": "Inspect its policy topic and prepare a compliant replacement.",
+                    "expected_impact": "May recover eligible reach.",
+                    "estimate": {"label": "directional"},
+                    "risk": "low",
+                    "reversible": True,
+                    "applyability": "task",
+                    "source_skill": "red-flag-radar",
+                }
+            ],
+            "recovery_actions": [],
+            "holds": [],
+            "coverage_gaps": [
+                "Landing-page HTML was not crawled in this Google Ads-only run."
+            ],
+            "assessment_details": {
+                "critical_or_warning_checks": 1,
+                "wins": 0,
+                "criteria_checked": 2,
+                "action_limit": 7,
+            },
+            "data_receipt": {
+                "source": "GMA 13 Skills Google Ads",
+                "retrieved_at": "2026-07-23T10:00:00Z",
+                "data_through": "2026-07-20",
+                "analysis_start": "2026-06-21",
+                "analysis_end": "2026-07-20",
+            },
+            "change_plan": {
+                "id": "gma_11111111111111111111111111111111",
+                "status": "draft",
+                "review_url": "https://example.test/red-flag-plan",
+                "applyable_action_ids": [],
+            },
+        }
+
+
 class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.store = MemoryStore()
@@ -468,7 +551,9 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             for module in result["modules"]
             if module["runtime_status"] == "available"
         ]
-        self.assertEqual(available, ["budget_reallocator"])
+        self.assertEqual(
+            available, ["red_flag_radar", "budget_reallocator"]
+        )
 
     async def test_run_skill_returns_validated_stable_contract(self):
         prepared = await self._save_scope()
@@ -655,13 +740,43 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
         prepared = await self._save_scope()
         with self.assertRaisesRegex(GmaRuntimeError, "not yet ported"):
             await run_skill(
-                module_id="red_flag_radar",
+                module_id="weekly_digest",
                 scope_id=prepared["scope_id"],
                 confirmed_scope_hash=prepared["scope_hash"],
                 business_inputs={},
                 store=self.store,
                 owner_resolver=self.owner,
             )
+
+    async def test_red_flag_radar_uses_its_own_typed_checks_and_tasks(self):
+        prepared = await self._save_scope()
+        with patch(
+            "ads_mcp.gma_runtime.RedFlagRadarRunService",
+            return_value=FakeRedFlagService(),
+        ):
+            result = await run_skill(
+                module_id="red_flag_radar",
+                scope_id=prepared["scope_id"],
+                confirmed_scope_hash=prepared["scope_hash"],
+                business_inputs={"target_cpa": 50},
+                store=self.store,
+                owner_resolver=self.owner,
+            )
+
+        self.assertEqual(result["module"]["number"], 2)
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["checks"][0]["criterion"], "Active ad policy eligibility")
+        self.assertEqual(result["recommendations"][0]["applyability"], "task")
+        self.assertEqual(
+            result["assessment"]["radar_summary"]["criteria_checked"], 2
+        )
+        rendered = await render_run(
+            result["run_id"],
+            store=self.store,
+            owner_resolver=self.owner,
+        )
+        self.assertIn("Recommended actions", rendered["content"])
+        self.assertIn("Review the policy-limited ad", rendered["content"])
 
     async def test_hybrid_budget_scope_requires_separate_campaign_groups(self):
         scope = prepared_scope()

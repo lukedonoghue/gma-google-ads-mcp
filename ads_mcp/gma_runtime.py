@@ -20,10 +20,14 @@ from ads_mcp.skill_runs.common import (
     resolve_analysis_window,
     trailing_complete_days,
 )
+from ads_mcp.skill_runs.red_flag_service import RedFlagRadarRunService
 
-RUNTIME_VERSION = "1.0.0-alpha.5"
-METHODOLOGY_VERSIONS = {"budget_reallocator": "gma-budget-v1.0.0"}
-EXPECTED_PLUGIN_VERSION = "0.6.1"
+RUNTIME_VERSION = "1.0.0-alpha.6"
+METHODOLOGY_VERSIONS = {
+    "red_flag_radar": "gma-red-flag-v1.0.0",
+    "budget_reallocator": "gma-budget-v1.0.0",
+}
+EXPECTED_PLUGIN_VERSION = "0.6.2"
 SCOPE_TTL_SECONDS = 24 * 60 * 60
 RUN_TTL_SECONDS = 90 * 24 * 60 * 60
 WORKSPACE_TTL_SECONDS = 180 * 24 * 60 * 60
@@ -476,29 +480,41 @@ def render_run_result(result: Mapping[str, Any]) -> str:
         "",
         "## What the skill checked",
         "",
-        "| Campaign | Result | Why / next route |",
-        "|---|---|---|",
+        "| Campaign | Check | Result | What to do next |",
+        "|---|---|---|---|",
     ]
     for check in result["checks"]:
-        holds = check.get("holds") or []
-        routes = check.get("routes") or []
-        if holds:
-            decision = "Hold"
-            why = "; ".join(_text(item) for item in holds)
-        elif check.get("recipient_eligible"):
-            decision = "Eligible to receive budget"
-            why = _text(check.get("constraint"))
-        elif check.get("donor_eligible"):
-            decision = "Eligible budget donor"
-            why = _text(check.get("constraint"))
+        if module["id"] == "red_flag_radar":
+            lines.append(
+                f"| {_text(check.get('campaign_name'))} | "
+                f"{_text(check.get('criterion'))} | "
+                f"{_text(check.get('status')).replace('_', ' ').title()}: "
+                f"{_text(check.get('decision'))} | "
+                f"{_text(check.get('next_step'))} |"
+            )
         else:
-            decision = "No budget move"
-            why = _text(check.get("constraint"))
-        if routes:
-            why += "; review with " + ", ".join(_text(item) for item in routes)
-        lines.append(
-            f"| {_text(check.get('campaign_name'))} | {decision} | {why} |"
-        )
+            holds = check.get("holds") or []
+            routes = check.get("routes") or []
+            if holds:
+                decision = "Hold"
+                why = "; ".join(_text(item) for item in holds)
+            elif check.get("recipient_eligible"):
+                decision = "Eligible to receive budget"
+                why = _text(check.get("constraint"))
+            elif check.get("donor_eligible"):
+                decision = "Eligible budget donor"
+                why = _text(check.get("constraint"))
+            else:
+                decision = "No budget move"
+                why = _text(check.get("constraint"))
+            if routes:
+                why += "; review with " + ", ".join(
+                    _text(item) for item in routes
+                )
+            lines.append(
+                f"| {_text(check.get('campaign_name'))} | "
+                f"Budget eligibility | {decision} | {why} |"
+            )
 
     recovery_actions = result.get("recovery_actions") or []
     lines.extend(["", "## Recovery plan", ""])
@@ -539,12 +555,12 @@ def render_run_result(result: Mapping[str, Any]) -> str:
             ]
         )
 
-    lines.extend(["## Google Ads changes", ""])
+    lines.extend(["## Recommended actions", ""])
     recommendations = result["recommendations"]
     if not recommendations:
         lines.append(
-            "No budget edit passed every safety and evidence gate. "
-            "Use the Recovery plan above to unlock a defensible rerun."
+            "No action crossed this skill's evidence threshold. "
+            "Use the Recovery plan above if a required check was unavailable."
         )
     for recommendation in recommendations:
         lines.extend(
@@ -556,11 +572,6 @@ def render_run_result(result: Mapping[str, Any]) -> str:
                 "",
                 f"**Status:** {_text(recommendation.get('applyability')).title()}",
                 "",
-                (
-                    f"**Exact change:** {_money_from_value(recommendation.get('current_value'), currency)} "
-                    f"→ {_money_from_value(recommendation.get('proposed_value'), currency)}"
-                ),
-                "",
                 f"**Why:** {_text(recommendation.get('reason'))}",
                 "",
                 f"**Evidence:** {_text(recommendation.get('evidence_summary'))}",
@@ -569,6 +580,15 @@ def render_run_result(result: Mapping[str, Any]) -> str:
                 "",
             ]
         )
+        if recommendation.get("applyability") == "applyable":
+            lines[-1:-1] = [
+                (
+                    f"**Exact change:** "
+                    f"{_money_from_value(recommendation.get('current_value'), currency)} "
+                    f"→ {_money_from_value(recommendation.get('proposed_value'), currency)}"
+                ),
+                "",
+            ]
 
     gaps = result["coverage"].get("gaps") or []
     lines.extend(["## What was not checked", ""])
@@ -583,8 +603,14 @@ def render_run_result(result: Mapping[str, Any]) -> str:
     applyable_ids = change_plan.get("applyable_action_ids") or []
     if applyable_ids:
         lines.append(
-            "Google Ads has **not** been changed. Select exact budget-change IDs "
+            "Google Ads has **not** been changed. Select exact change IDs "
             "to validate, or recovery-task IDs to add to the Action list."
+        )
+    elif recommendations:
+        lines.append(
+            "Google Ads has **not** been changed. Select advisory or task IDs to "
+            "add them to the shared Action list; these items cannot enter the "
+            "Google Ads apply path."
         )
     elif recovery_actions:
         lines.append(
@@ -740,54 +766,94 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
 
     if not isinstance(result["checks"], list) or not result["checks"]:
         raise GmaRuntimeError("Runtime result must contain checks")
-    check_fields = {
-        "campaign_id",
-        "campaign_name",
-        "status",
-        "channel_type",
-        "efficiency",
-        "constraint",
-        "recipient_eligible",
-        "donor_eligible",
-        "holds",
-        "hold_codes",
-        "routes",
-        "goal_scope",
-        "effective_conversion_actions",
-        "clicks_per_day",
-        "conversion_volume",
-        "scaling_volume_floor",
-        "bidding_strategy_type",
-        "search_impression_share",
-        "search_budget_lost_impression_share",
-        "search_rank_lost_impression_share",
-    }
+    if module["id"] == "red_flag_radar":
+        check_fields = {
+            "id",
+            "campaign_id",
+            "campaign_name",
+            "criterion",
+            "status",
+            "evidence",
+            "why_it_matters",
+            "decision",
+            "next_step",
+            "metrics",
+            "source",
+        }
+    else:
+        check_fields = {
+            "campaign_id",
+            "campaign_name",
+            "status",
+            "channel_type",
+            "efficiency",
+            "constraint",
+            "recipient_eligible",
+            "donor_eligible",
+            "holds",
+            "hold_codes",
+            "routes",
+            "goal_scope",
+            "effective_conversion_actions",
+            "clicks_per_day",
+            "conversion_volume",
+            "scaling_volume_floor",
+            "bidding_strategy_type",
+            "search_impression_share",
+            "search_budget_lost_impression_share",
+            "search_rank_lost_impression_share",
+        }
     for check in result["checks"]:
         if not isinstance(check, Mapping) or set(check) != check_fields:
             raise GmaRuntimeError("Runtime result contains an invalid check")
         if not re.fullmatch(r"\d{1,20}", str(check["campaign_id"])):
             raise GmaRuntimeError("Runtime check has an invalid campaign ID")
-        if not isinstance(check["holds"], list) or not isinstance(
-            check["routes"], list
-        ):
-            raise GmaRuntimeError(
-                "Runtime check holds, hold codes, routes, and conversion actions "
-                "must be lists"
-            )
-        if not isinstance(check["hold_codes"], list) or not isinstance(
-            check["effective_conversion_actions"], list
-        ):
-            raise GmaRuntimeError(
-                "Runtime check holds, hold codes, routes, and conversion actions "
-                "must be lists"
-            )
+        if module["id"] == "red_flag_radar":
+            if (
+                not re.fullmatch(r"RF-[A-Z]+-\d{1,20}", str(check["id"]))
+                or check["status"]
+                not in {
+                    "critical",
+                    "warning",
+                    "info",
+                    "win",
+                    "healthy",
+                    "not_checked",
+                }
+                or check["source"]
+                not in {"live_google_ads", "calculated", "unavailable"}
+                or not isinstance(check["metrics"], Mapping)
+            ):
+                raise GmaRuntimeError(
+                    "Runtime Red-Flag Radar check is invalid"
+                )
+        else:
+            if not isinstance(check["holds"], list) or not isinstance(
+                check["routes"], list
+            ):
+                raise GmaRuntimeError(
+                    "Runtime check holds, hold codes, routes, and conversion actions "
+                    "must be lists"
+                )
+            if not isinstance(check["hold_codes"], list) or not isinstance(
+                check["effective_conversion_actions"], list
+            ):
+                raise GmaRuntimeError(
+                    "Runtime check holds, hold codes, routes, and conversion actions "
+                    "must be lists"
+                )
 
     assessment = result["assessment"]
+    assessment_detail_field = (
+        "radar_summary"
+        if module["id"] == "red_flag_radar"
+        else "structural_budget_check"
+    )
     if not isinstance(assessment, Mapping) or set(assessment) != {
         "state",
         "conclusion",
         "holds",
-        "structural_budget_check",
+        assessment_detail_field,
     }:
         raise GmaRuntimeError("Runtime result has an invalid assessment")
     if not isinstance(result["recommendations"], list):
@@ -832,9 +898,12 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
             )
         for value_field in ("current_value", "proposed_value"):
             value = recommendation[value_field]
-            if (
-                not isinstance(value, Mapping)
-                or set(value) != {"amount_micros"}
+            if not isinstance(value, Mapping):
+                raise GmaRuntimeError(
+                    f"Runtime recommendation {action_id} has an invalid {value_field}"
+                )
+            if module["id"] == "budget_reallocator" and (
+                set(value) != {"amount_micros"}
                 or isinstance(value["amount_micros"], bool)
                 or not isinstance(value["amount_micros"], int)
                 or value["amount_micros"] <= 0
@@ -858,7 +927,8 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
             raise GmaRuntimeError(
                 f"Runtime recommendation {action_id} must use an advisory operation"
             )
-        if recommendation["source_skill"] != "budget-reallocator":
+        expected_source_skill = str(module["id"]).replace("_", "-")
+        if recommendation["source_skill"] != expected_source_skill:
             raise GmaRuntimeError(
                 f"Runtime recommendation {action_id} has an invalid source skill"
             )
@@ -990,8 +1060,6 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
         )
     if result["renderers"] != {"chat": "gma_render_run", "app": "gma_get_run"}:
         raise GmaRuntimeError("Runtime result has invalid renderers")
-    if coverage.get("gaps") and result["status"] == "complete":
-        raise GmaRuntimeError("A result with coverage gaps cannot be complete")
     expected_signature = _core_signature({**result, "core_signature": ""})
     if result["core_signature"] != expected_signature:
         raise GmaRuntimeError("Runtime result signature is invalid")
@@ -1422,6 +1490,29 @@ async def _run_budget_reallocator(
     )
 
 
+async def _run_red_flag_radar(
+    scope: Mapping[str, Any], inputs: Mapping[str, Any]
+) -> dict[str, Any]:
+    business_mode = str(scope["business_mode"])
+    if business_mode == "hybrid":
+        raise GmaRuntimeError(
+            "Red-Flag Radar V1 requires separate ecommerce and lead-gen campaign scopes"
+        )
+    return await RedFlagRadarRunService().run(
+        customer_id=str(scope["customer_id"]),
+        login_customer_id=scope.get("login_customer_id"),
+        business_mode=business_mode,
+        target_cpa=inputs.get("target_cpa"),
+        target_roas=inputs.get("target_roas"),
+        outcome_quality_confirmed=bool(
+            inputs.get("outcome_quality_confirmed", False)
+        ),
+        analysis_start=str(scope["analysis_start"]),
+        analysis_end=str(scope["analysis_end"]),
+        campaign_ids=[str(item["id"]) for item in scope["campaigns"]],
+    )
+
+
 def list_goal_benchmarks(business_mode: str) -> dict[str, Any]:
     """Return source-labelled benchmark categories for one business mode."""
 
@@ -1462,7 +1553,10 @@ async def build_goal_report(
         raise GmaRuntimeError(str(error)) from error
 
 
-MODULE_HANDLERS = {"budget_reallocator": _run_budget_reallocator}
+MODULE_HANDLERS = {
+    "red_flag_radar": _run_red_flag_radar,
+    "budget_reallocator": _run_budget_reallocator,
+}
 
 
 async def run_skill(
@@ -1510,15 +1604,19 @@ async def run_skill(
     raw = await handler(scope, inputs)
 
     gaps = list(raw.get("coverage_gaps") or [])
-    if gaps:
+    if raw["status"] == "partial":
         status = "partial"
     elif raw["status"] == "hold":
         status = "blocked"
     else:
         status = "complete"
     recommendations = [dict(action) for action in raw["recommendations"]]
+    checks = [
+        dict(item)
+        for item in raw.get("checks", raw.get("campaign_results", []))
+    ]
     analyzed_ids = {
-        str(item["campaign_id"]) for item in raw.get("campaign_results", [])
+        str(item["campaign_id"]) for item in checks
     }
     requested_spend = sum(
         int(item.get("spend_micros") or 0) for item in scope["campaigns"]
@@ -1562,12 +1660,20 @@ async def run_skill(
             "spend_coverage_percent": spend_coverage_percent,
             "gaps": gaps,
         },
-        "checks": raw["campaign_results"],
+        "checks": checks,
         "assessment": {
             "state": raw["status"],
             "conclusion": raw["conclusion"],
             "holds": raw["holds"],
-            "structural_budget_check": raw["structural_budget_check"],
+            (
+                "radar_summary"
+                if module_id == "red_flag_radar"
+                else "structural_budget_check"
+            ): (
+                raw["assessment_details"]
+                if module_id == "red_flag_radar"
+                else raw["structural_budget_check"]
+            ),
         },
         "recommendations": recommendations,
         "recovery_actions": [dict(action) for action in raw["recovery_actions"]],

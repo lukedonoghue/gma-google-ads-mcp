@@ -303,7 +303,14 @@ def _normalize_action(
     if not ACTION_ID_RE.fullmatch(action_id):
         raise ChangesetError("action.id may contain only letters, numbers, _ and -")
     applyability = raw.get("applyability", "advisory")
-    if applyability not in {"applyable", "advisory", "blocked", "hold", "monitor"}:
+    if applyability not in {
+        "applyable",
+        "advisory",
+        "task",
+        "blocked",
+        "hold",
+        "monitor",
+    }:
         raise ChangesetError(f"Invalid applyability for {action_id}")
     operation_type = raw.get("operation_type", "advisory")
     if applyability == "applyable" and operation_type not in ALLOWLISTED_OPERATIONS:

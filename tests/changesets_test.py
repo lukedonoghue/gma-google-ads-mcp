@@ -188,6 +188,39 @@ class ChangesetServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored["owner_id"], "owner-one")
         self.assertIn("review_token_hash", stored)
 
+    async def test_read_only_specialist_task_never_enters_apply_path(self):
+        plan = sample_plan()
+        plan["skills"] = ["red-flag-radar"]
+        plan["actions"] = [
+            {
+                "id": "RF-001",
+                "priority": 1,
+                "severity": "critical",
+                "evidence_label": "Calculated from live Google Ads data",
+                "entity": "Resolve a disapproved ad",
+                "resource_name": "",
+                "operation_type": "advisory",
+                "current_value": {},
+                "proposed_value": {},
+                "reason": "An active ad is disapproved.",
+                "evidence_summary": "One disapproved active ad was returned.",
+                "details": "Review Policy details and resolve or appeal the ad.",
+                "expected_impact": "May restore delivery.",
+                "estimate": {"label": "directional"},
+                "risk": "low",
+                "reversible": True,
+                "applyability": "task",
+                "source_skill": "red-flag-radar",
+            }
+        ]
+
+        created = await self.service.create(plan)
+
+        self.assertEqual(created["actions"][0]["applyability"], "task")
+        self.assertEqual(created["actions"][0]["operation_type"], "advisory")
+        self.assertEqual(created["validation"]["status"], "not_validated")
+        self.assertEqual(created["application"]["status"], "not_applied")
+
     async def test_rejects_unallowlisted_applyable_action(self):
         plan = sample_plan()
         plan["actions"][0]["operation_type"] = "delete_campaign"
