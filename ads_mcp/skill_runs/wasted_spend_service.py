@@ -75,6 +75,7 @@ class GoogleAdsWastedSpendGateway(GoogleAdsBudgetGateway):
         order_by: str,
         metric_filter: str,
         lane: str,
+        statuses: Mapping[tuple[str, str], str],
         gaps: list[str],
     ) -> list[dict[str, Any]]:
         query = (
@@ -138,8 +139,7 @@ class GoogleAdsWastedSpendGateway(GoogleAdsBudgetGateway):
             "SELECT campaign_search_term_view.search_term, campaign.id, "
             "campaign.name, campaign.advertising_channel_type, "
             "segments.search_term_match_type, "
-            "segments.search_term_targeting_status, metrics.cost_micros, "
-            "metrics.conversions, metrics.all_conversions, "
+            "metrics.cost_micros, metrics.conversions, metrics.all_conversions, "
             "metrics.conversions_value, metrics.clicks, metrics.impressions "
             "FROM campaign_search_term_view "
             f"WHERE segments.date BETWEEN '{start_date}' AND '{end_date}' "
@@ -164,7 +164,13 @@ class GoogleAdsWastedSpendGateway(GoogleAdsBudgetGateway):
             result.append(
                 {
                     "search_term": row.campaign_search_term_view.search_term,
-                    "status": _enum(row.segments.search_term_targeting_status),
+                    "status": statuses.get(
+                        (
+                            str(row.campaign.id),
+                            row.campaign_search_term_view.search_term,
+                        ),
+                        "NONE",
+                    ),
                     "campaign_id": str(row.campaign.id),
                     "campaign_name": row.campaign.name,
                     "channel_type": _enum(
@@ -178,6 +184,43 @@ class GoogleAdsWastedSpendGateway(GoogleAdsBudgetGateway):
                 }
             )
         return result
+
+    def _pmax_statuses(
+        self,
+        service: Any,
+        customer_id: str,
+        *,
+        start_date: str,
+        end_date: str,
+        campaign_ids: Sequence[str],
+        gaps: list[str],
+    ) -> dict[tuple[str, str], str]:
+        query = (
+            "SELECT campaign_search_term_view.search_term, campaign.id, "
+            "segments.search_term_targeting_status "
+            "FROM campaign_search_term_view "
+            f"WHERE segments.date BETWEEN '{start_date}' AND '{end_date}' "
+            "AND campaign.advertising_channel_type = 'PERFORMANCE_MAX'"
+            f"{_campaign_filter(campaign_ids)} LIMIT 1000"
+        )
+        try:
+            rows = self._search(service, customer_id, query)
+        except Exception:
+            gaps.append(
+                "Performance Max search-term exclusion status was unavailable"
+            )
+            return {}
+        if len(rows) == 1000:
+            gaps.append(
+                "Performance Max search-term exclusion status reached the 1,000-row decision cap"
+            )
+        return {
+            (
+                str(row.campaign.id),
+                row.campaign_search_term_view.search_term,
+            ): _enum(row.segments.search_term_targeting_status)
+            for row in rows
+        }
 
     def _existing_negatives(
         self,
@@ -430,6 +473,14 @@ class GoogleAdsWastedSpendGateway(GoogleAdsBudgetGateway):
                 gaps=gaps,
             )
         )
+        pmax_statuses = self._pmax_statuses(
+            service,
+            normalized_customer,
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
+            campaign_ids=resolved_campaign_ids,
+            gaps=gaps,
+        )
         terms.extend(
             self._pmax_rows(
                 service,
@@ -440,6 +491,7 @@ class GoogleAdsWastedSpendGateway(GoogleAdsBudgetGateway):
                 order_by="metrics.cost_micros",
                 metric_filter="metrics.clicks > 0",
                 lane="spend_risk",
+                statuses=pmax_statuses,
                 gaps=gaps,
             )
         )
@@ -453,6 +505,7 @@ class GoogleAdsWastedSpendGateway(GoogleAdsBudgetGateway):
                 order_by="metrics.impressions",
                 metric_filter="metrics.impressions > 0",
                 lane="match_pollution",
+                statuses=pmax_statuses,
                 gaps=gaps,
             )
         )

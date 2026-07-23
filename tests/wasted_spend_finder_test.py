@@ -130,6 +130,24 @@ class WastedSpendFinderTest(unittest.TestCase):
             recovery["follow_up"]["module_id"], "wasted_spend_finder"
         )
 
+    def test_manual_lymphatic_drainage_is_not_treated_as_instructions(self):
+        data = snapshot(
+            search_term(
+                "manual lymphatic drainage massage",
+                cost=0,
+                clicks=0,
+                impressions=25,
+            )
+        )
+
+        result = run(data)
+
+        self.assertEqual(result["checks"][0]["status"], "monitor")
+        self.assertNotIn(
+            "REC-WS-CONFIRM-INTENT",
+            {item["id"] for item in result["recovery_actions"]},
+        )
+
     def test_missing_brand_terms_blocks_actions_with_a_clear_fix(self):
         data = snapshot(search_term("massage jobs"), brand=False)
 

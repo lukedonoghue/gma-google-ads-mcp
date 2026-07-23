@@ -752,6 +752,9 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             result["run_id"], store=self.store, owner_resolver=self.owner
         )
         self.assertIn("# Skill 3 — Wasted-Spend Finder", rendered["content"])
+        self.assertIn(
+            "Reviewed **2** visible search terms", rendered["content"]
+        )
         self.assertIn("Search term “massage jobs”", rendered["content"])
         self.assertIn("REC-WS-CONFIRM-INTENT", rendered["content"])
         self.assertIn("WS-001", rendered["content"])

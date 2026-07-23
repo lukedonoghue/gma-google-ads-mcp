@@ -32,10 +32,31 @@ gma_mcp = FastMCP("gma", mask_error_details=True)
 
 
 def _with_authoritative_report(result: dict[str, Any]) -> dict[str, Any]:
-    """Attach the canonical presentation so hosts do not rebuild the report."""
+    """Return a compact report envelope while retaining the full run server-side."""
 
     return {
-        **result,
+        "contract_version": result["contract_version"],
+        "run_id": result["run_id"],
+        "runtime_version": result["runtime_version"],
+        "methodology_version": result["methodology_version"],
+        "module": result["module"],
+        "status": result["status"],
+        "scope": result["scope"],
+        "data_receipt": result["data_receipt"],
+        "coverage": result["coverage"],
+        "assessment": result["assessment"],
+        "recommendations": result["recommendations"],
+        "recovery_actions": result["recovery_actions"],
+        "change_plan": result["change_plan"],
+        "core_signature": result["core_signature"],
+        "full_result_tool": {
+            "name": "gma_get_run",
+            "run_id": result["run_id"],
+            "purpose": (
+                "Retrieve the complete validated check ledger for the GMA "
+                "workspace or a detailed evidence review."
+            ),
+        },
         "authoritative_report": {
             "content_type": "text/markdown",
             "presentation_rule": (
@@ -176,13 +197,14 @@ async def run_skill(
     confirmed_scope_hash: str,
     business_inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run one registered GMA module and return its finished customer report.
+    """Run one registered GMA module and return a compact finished report.
 
     This creates a review-only Change Plan but never changes Google Ads. The
     hosted runtime owns queries, normalization, calculations, gates, IDs, and
     applyability. The `authoritative_report` field is the report Claude or Codex
     must show rather than rewriting the raw result. It always includes the
-    recovery plan when a safety gate blocks a recommendation.
+    recovery plan when a safety gate blocks a recommendation. Use `gma_get_run`
+    only when the complete validated evidence ledger is needed.
     """
 
     try:

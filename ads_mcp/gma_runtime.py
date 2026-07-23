@@ -26,7 +26,7 @@ from ads_mcp.skill_runs.common import (
 from ads_mcp.skill_runs.red_flag_service import RedFlagRadarRunService
 from ads_mcp.skill_runs.wasted_spend_service import WastedSpendFinderRunService
 
-RUNTIME_VERSION = "1.0.0-alpha.13"
+RUNTIME_VERSION = "1.0.0-alpha.14"
 METHODOLOGY_VERSIONS = {
     "instant_account_audit": "gma-instant-audit-v1.0.2",
     "red_flag_radar": "gma-red-flag-v1.0.2",
@@ -485,11 +485,67 @@ def render_run_result(result: Mapping[str, Any]) -> str:
         f"**{_text(assessment.get('state')).replace('_', ' ').title()}:** "
         f"{_text(assessment.get('conclusion'))}",
         "",
-        "## What the skill checked",
-        "",
-        "| Campaign | Check | Result | What to do next |",
-        "|---|---|---|---|",
     ]
+    checks_to_render = list(result["checks"])
+    if module["id"] == "wasted_spend_finder":
+        summary = assessment.get("waste_summary") or {}
+        counts = {
+            str(key).upper(): int(value)
+            for key, value in (
+                summary.get("classification_counts") or {}
+            ).items()
+        }
+        reviewed = int(summary.get("visible_search_terms_reviewed") or 0)
+        lines.extend(
+            [
+                "### Search-term review summary",
+                "",
+                f"Reviewed **{reviewed}** visible search terms. "
+                f"**Exclude:** {counts.get('EXCLUDE', 0)} · "
+                f"**Needs confirmation:** {counts.get('EDGE_CASE', 0)} · "
+                f"**Review:** {counts.get('FLAG', 0)} · "
+                f"**Monitor:** {counts.get('MONITOR', 0)} · "
+                f"**Protected or already covered:** "
+                f"{counts.get('KEEP', 0) + counts.get('ALREADY_COVERED', 0)}",
+                "",
+            ]
+        )
+        priority = {
+            "exclude": 0,
+            "edge_case": 1,
+            "flag": 2,
+            "already_covered": 3,
+            "monitor": 4,
+            "keep": 5,
+        }
+        checks_to_render.sort(
+            key=lambda check: (
+                priority.get(str(check.get("status") or "").lower(), 6),
+                -int((check.get("metrics") or {}).get("cost_micros") or 0),
+                str(check.get("criterion") or ""),
+            )
+        )
+        if len(checks_to_render) > 25:
+            lines.extend(
+                [
+                    (
+                        "Showing the **25 highest-priority rows** in chat. "
+                        f"The complete validated ledger retains all "
+                        f"**{len(checks_to_render)}** rows for the GMA "
+                        "workspace and `gma_get_run`."
+                    ),
+                    "",
+                ]
+            )
+            checks_to_render = checks_to_render[:25]
+    lines.extend(
+        [
+            "## What the skill checked",
+            "",
+            "| Campaign | Check | Result | What to do next |",
+            "|---|---|---|---|",
+        ]
+    )
     holds = assessment.get("holds") or []
     if holds:
         checked_index = lines.index("## What the skill checked")
@@ -499,7 +555,7 @@ def render_run_result(result: Mapping[str, Any]) -> str:
             *[f"- {_text(hold)}" for hold in holds],
             "",
         ]
-    for check in result["checks"]:
+    for check in checks_to_render:
         if module["id"] == "instant_account_audit":
             lines.append(
                 f"| {_text(check.get('scope'))} | "
