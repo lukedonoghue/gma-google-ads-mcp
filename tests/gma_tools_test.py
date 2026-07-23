@@ -24,7 +24,12 @@ class GmaToolPresentationTest(unittest.TestCase):
             "checks": [{"id": "BR-101"}],
             "recommendations": [],
             "recovery_actions": [{"id": "REC-OUTCOME-QUALITY"}],
-            "change_plan": {"id": "gma_test"},
+            "change_plan": {
+                "id": "gma_test",
+                "status": "draft",
+                "review_url": "https://example.test/private?token=secret",
+                "applyable_action_ids": [],
+            },
             "core_signature": "a" * 64,
         }
         rendered = (
@@ -45,6 +50,11 @@ class GmaToolPresentationTest(unittest.TestCase):
             response["full_result_tool"]["run_id"], canonical["run_id"]
         )
         self.assertEqual(response["full_result_tool"]["name"], "gma_get_run")
+        self.assertNotIn("review_url", response["change_plan"])
+        self.assertNotIn(
+            "https://example.test/private",
+            response["authoritative_report"]["content"],
+        )
         self.assertEqual(response["authoritative_report"]["content"], rendered)
         self.assertIn(
             "Do not omit",

@@ -47,7 +47,18 @@ def _with_authoritative_report(result: dict[str, Any]) -> dict[str, Any]:
         "assessment": result["assessment"],
         "recommendations": result["recommendations"],
         "recovery_actions": result["recovery_actions"],
-        "change_plan": result["change_plan"],
+        "change_plan": {
+            "id": result["change_plan"]["id"],
+            "status": result["change_plan"]["status"],
+            "applyable_action_ids": result["change_plan"][
+                "applyable_action_ids"
+            ],
+            "review_access": (
+                "Open this draft inside the authenticated GMA review "
+                "workspace. The private tokenized URL is intentionally "
+                "omitted from chat output."
+            ),
+        },
         "core_signature": result["core_signature"],
         "full_result_tool": {
             "name": "gma_get_run",

@@ -26,7 +26,7 @@ from ads_mcp.skill_runs.common import (
 from ads_mcp.skill_runs.red_flag_service import RedFlagRadarRunService
 from ads_mcp.skill_runs.wasted_spend_service import WastedSpendFinderRunService
 
-RUNTIME_VERSION = "1.0.0-alpha.14"
+RUNTIME_VERSION = "1.0.0-alpha.15"
 METHODOLOGY_VERSIONS = {
     "instant_account_audit": "gma-instant-audit-v1.0.2",
     "red_flag_radar": "gma-red-flag-v1.0.2",
@@ -720,8 +720,11 @@ def render_run_result(result: Mapping[str, Any]) -> str:
             "Google Ads has **not** been changed. Keep the current settings and "
             "rerun when a fresh evidence window is available."
         )
-    if change_plan.get("review_url"):
-        lines.append(f"Private Change Plan: {_text(change_plan['review_url'])}")
+    if change_plan.get("id"):
+        lines.append(
+            f"Draft Change Plan **{_text(change_plan['id'])}** is available "
+            "inside the authenticated GMA review workspace."
+        )
     return "\n".join(lines)
 
 

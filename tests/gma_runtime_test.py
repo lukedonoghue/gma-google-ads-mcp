@@ -758,6 +758,8 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Search term “massage jobs”", rendered["content"])
         self.assertIn("REC-WS-CONFIRM-INTENT", rendered["content"])
         self.assertIn("WS-001", rendered["content"])
+        self.assertNotIn("https://example.test/waste-plan", rendered["content"])
+        self.assertIn("authenticated GMA review workspace", rendered["content"])
 
     async def test_run_rejects_a_scope_hash_the_user_did_not_confirm(self):
         prepared = await self._save_scope()
