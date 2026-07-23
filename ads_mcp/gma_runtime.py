@@ -22,7 +22,7 @@ from ads_mcp.skill_runs.common import (
 )
 from ads_mcp.skill_runs.red_flag_service import RedFlagRadarRunService
 
-RUNTIME_VERSION = "1.0.0-alpha.9"
+RUNTIME_VERSION = "1.0.0-alpha.10"
 METHODOLOGY_VERSIONS = {
     "red_flag_radar": "gma-red-flag-v1.0.2",
     "budget_reallocator": "gma-budget-v1.0.0",
@@ -898,6 +898,20 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
             raise GmaRuntimeError(
                 f"Runtime recommendation {action_id} has invalid applyability"
             )
+        for text_field in (
+            "entity",
+            "reason",
+            "evidence_summary",
+            "details",
+            "expected_impact",
+        ):
+            if (
+                not isinstance(recommendation.get(text_field), str)
+                or not recommendation[text_field].strip()
+            ):
+                raise GmaRuntimeError(
+                    f"Runtime recommendation {action_id} has no actionable {text_field}"
+                )
         for value_field in ("current_value", "proposed_value"):
             value = recommendation[value_field]
             if not isinstance(value, Mapping):
@@ -982,12 +996,19 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
                 f"Runtime recovery action {recovery_id} has an invalid owner"
             )
         if (
-            not isinstance(recovery.get("steps"), list)
+            not isinstance(recovery.get("title"), str)
+            or not recovery["title"].strip()
+            or not isinstance(recovery.get("reason"), str)
+            or not recovery["reason"].strip()
+            or not isinstance(recovery.get("steps"), list)
             or not recovery["steps"]
             or not all(isinstance(step, str) and step.strip() for step in recovery["steps"])
             or not isinstance(recovery.get("applies_to"), list)
             or not recovery["applies_to"]
             or not isinstance(recovery.get("resolves"), list)
+            or not recovery["resolves"]
+            or not isinstance(recovery.get("completion_signal"), str)
+            or not recovery["completion_signal"].strip()
             or recovery.get("selectable") is not True
         ):
             raise GmaRuntimeError(
@@ -1036,10 +1057,28 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
         recovery_ids.append(recovery_id)
     if len(recovery_ids) != len(set(recovery_ids)):
         raise GmaRuntimeError("Runtime recovery action IDs must be unique")
-    if result["status"] == "blocked" and not result["recovery_actions"]:
+    if (
+        result["status"] in {"blocked", "partial"}
+        or bool(assessment.get("holds"))
+    ) and not result["recovery_actions"]:
         raise GmaRuntimeError(
-            "A blocked runtime result must contain a recovery plan"
+            "A blocked or partial runtime result must contain a recovery plan"
         )
+    recovery_campaign_ids = {
+        str(entity["campaign_id"])
+        for recovery in result["recovery_actions"]
+        for entity in recovery["applies_to"]
+    }
+    for check in result["checks"]:
+        needs_recovery = (
+            check.get("source") == "unavailable"
+            if module["id"] == "red_flag_radar"
+            else bool(check.get("holds"))
+        )
+        if needs_recovery and str(check["campaign_id"]) not in recovery_campaign_ids:
+            raise GmaRuntimeError(
+                "Every unavailable or held campaign check must have an actionable recovery task"
+            )
     if not isinstance(result["unavailable_evidence"], list):
         raise GmaRuntimeError("Runtime unavailable evidence must be a list")
     if result["unavailable_evidence"] != coverage["gaps"]:

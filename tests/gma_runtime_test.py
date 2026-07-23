@@ -782,6 +782,52 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             rendered["content"],
         )
 
+    async def test_runtime_rejects_dead_end_recommendations_and_unavailable_checks(self):
+        prepared = await self._save_scope()
+        with patch(
+            "ads_mcp.gma_runtime.RedFlagRadarRunService",
+            return_value=FakeRedFlagService(),
+        ):
+            result = await run_skill(
+                module_id="red_flag_radar",
+                scope_id=prepared["scope_id"],
+                confirmed_scope_hash=prepared["scope_hash"],
+                business_inputs={"target_cpa": 50},
+                store=self.store,
+                owner_resolver=self.owner,
+            )
+
+        result["recommendations"][0]["details"] = ""
+        with self.assertRaisesRegex(GmaRuntimeError, "no actionable details"):
+            validate_run_result(result)
+
+        result["recommendations"][0]["details"] = "Inspect the policy topic."
+        result["checks"][0]["source"] = "unavailable"
+        with self.assertRaisesRegex(
+            GmaRuntimeError,
+            "must have an actionable recovery task",
+        ):
+            validate_run_result(result)
+
+    async def test_runtime_rejects_partial_result_without_recovery_plan(self):
+        prepared = await self._save_scope()
+        with patch(
+            "ads_mcp.gma_runtime.RedFlagRadarRunService",
+            return_value=FakeRedFlagService(),
+        ):
+            result = await run_skill(
+                module_id="red_flag_radar",
+                scope_id=prepared["scope_id"],
+                confirmed_scope_hash=prepared["scope_hash"],
+                business_inputs={"target_cpa": 50},
+                store=self.store,
+                owner_resolver=self.owner,
+            )
+
+        result["status"] = "partial"
+        with self.assertRaisesRegex(GmaRuntimeError, "must contain a recovery plan"):
+            validate_run_result(result)
+
     async def test_hybrid_budget_scope_requires_separate_campaign_groups(self):
         scope = prepared_scope()
         scope["business_mode"] = "hybrid"
