@@ -298,6 +298,40 @@ class RedFlagRadarTest(unittest.TestCase):
             )
         )
 
+    def test_paused_campaign_does_not_receive_impossible_volume_or_budget_task(self):
+        item = campaign(
+            latest=period(clicks=0, conversions=0),
+            previous=period(clicks=0, conversions=0),
+        )
+        item["status"] = "PAUSED"
+
+        result = evaluate_red_flag_radar(
+            snapshot(item),
+            business_mode="lead_gen",
+            target_cpa_micros=50_000_000,
+            outcome_quality_confirmed=True,
+        )
+
+        trend_check = next(
+            check
+            for check in result["checks"]
+            if check["criterion"].startswith("Latest complete")
+        )
+        budget_check = next(
+            check
+            for check in result["checks"]
+            if check["criterion"] == "Budget-capped winner"
+        )
+        self.assertEqual(trend_check["status"], "not_checked")
+        self.assertIn("paused", trend_check["decision"])
+        self.assertIn("paused", budget_check["decision"])
+        self.assertFalse(
+            any(
+                action["id"].startswith("REC-VOLUME-")
+                for action in result["recovery_actions"]
+            )
+        )
+
     def test_budget_capped_winner_routes_without_prescribing_amount(self):
         item = campaign()
 

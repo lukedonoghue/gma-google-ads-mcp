@@ -442,6 +442,23 @@ def _trend_result(
     business_mode: str,
     currency: str,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
+    if str(campaign.get("status")) != "ENABLED":
+        return (
+            _check(
+                check_id=f"RF-TREND-{campaign['id']}",
+                campaign=campaign,
+                criterion="Latest complete 7 days versus previous 7 days",
+                status="not_checked",
+                evidence=f"Campaign status is {str(campaign.get('status') or 'unknown').lower()}.",
+                why_it_matters="A paused campaign cannot build a current delivery trend.",
+                decision="No live weekly trend conclusion is appropriate while this campaign is paused.",
+                next_step="Leave it out of live optimisation. If it is intentionally re-enabled, collect enough new traffic and rerun Red-Flag Radar.",
+                metrics={"evidence_floor_met": False, "campaign_active": False},
+            ),
+            None,
+            None,
+        )
+
     latest = _metric_period(campaign.get("latest_period"))
     previous = _metric_period(campaign.get("previous_period"))
     volume_ok = min(latest["clicks"], previous["clicks"]) >= 30 or min(
@@ -697,7 +714,12 @@ def _budget_result(
         and isinstance(lost, (int, float))
         and lost > 0.10
     )
-    if winner:
+    if str(campaign.get("status")) != "ENABLED":
+        check_status = "info"
+        decision = "The campaign is paused, so no budget increase or reallocation is recommended."
+        next_step = "Leave the budget unchanged. If the campaign is intentionally relaunched, collect new evidence and rerun before scaling."
+        candidate = None
+    elif winner:
         check_status = "warning"
         decision = "This campaign beats the confirmed goal and is losing eligible searches to budget."
         next_step = "Run Budget Reallocator to test whether a capped increase or reallocation passes every safety gate."

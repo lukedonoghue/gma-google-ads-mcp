@@ -22,9 +22,9 @@ from ads_mcp.skill_runs.common import (
 )
 from ads_mcp.skill_runs.red_flag_service import RedFlagRadarRunService
 
-RUNTIME_VERSION = "1.0.0-alpha.7"
+RUNTIME_VERSION = "1.0.0-alpha.8"
 METHODOLOGY_VERSIONS = {
-    "red_flag_radar": "gma-red-flag-v1.0.1",
+    "red_flag_radar": "gma-red-flag-v1.0.2",
     "budget_reallocator": "gma-budget-v1.0.0",
 }
 EXPECTED_PLUGIN_VERSION = "0.6.2"
