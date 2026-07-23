@@ -206,8 +206,95 @@ class RedFlagRadarTest(unittest.TestCase):
         self.assertEqual(goal_check["status"], "warning")
         self.assertTrue(
             any(
-                action["id"] == "REC-OUTCOME-101"
+                action["id"] == "REC-OUTCOME-ACCOUNT"
                 for action in result["recovery_actions"]
+            )
+        )
+
+    def test_unconfirmed_backend_quality_warns_even_when_goal_names_look_sensible(self):
+        item = campaign(goals=["Qualified lead", "Book appointment"])
+
+        result = evaluate_red_flag_radar(
+            snapshot(item),
+            business_mode="lead_gen",
+            outcome_quality_confirmed=False,
+        )
+
+        goal_check = next(
+            check
+            for check in result["checks"]
+            if check["criterion"] == "Campaign-effective conversion goals"
+        )
+        self.assertEqual(goal_check["status"], "warning")
+        self.assertIn("backend lead quality", goal_check["decision"])
+        self.assertEqual(
+            [
+                action["id"]
+                for action in result["recovery_actions"]
+                if action["id"].startswith("REC-OUTCOME-")
+            ],
+            ["REC-OUTCOME-ACCOUNT"],
+        )
+        goal_actions = [
+            action
+            for action in result["recommendations"]
+            if "counting as a lead" in action["entity"]
+        ]
+        self.assertEqual(len(goal_actions), 1)
+        self.assertIn("bookings", goal_actions[0]["details"])
+
+    def test_lead_gen_actual_efficiency_is_returned_in_account_currency(self):
+        item = campaign()
+
+        result = evaluate_red_flag_radar(
+            snapshot(item),
+            business_mode="lead_gen",
+            target_cpa_micros=50_000_000,
+            outcome_quality_confirmed=False,
+        )
+
+        budget_check = next(
+            check
+            for check in result["checks"]
+            if check["criterion"] == "Budget-capped winner"
+        )
+        self.assertEqual(budget_check["metrics"]["actual_efficiency"], 20.0)
+        self.assertEqual(
+            budget_check["metrics"]["actual_efficiency_unit"],
+            "account_currency_per_conversion",
+        )
+
+    def test_ecommerce_roas_uses_currency_cost_not_raw_micros(self):
+        item = campaign()
+        item["conversions_value"] = 2_000
+        item["latest_period"] = period(
+            cost=100_000_000,
+            conversions=5,
+            value=500,
+        )
+        item["previous_period"] = period(
+            cost=100_000_000,
+            conversions=5,
+            value=500,
+        )
+
+        result = evaluate_red_flag_radar(
+            snapshot(item),
+            business_mode="ecommerce",
+            target_roas=4.0,
+            outcome_quality_confirmed=True,
+        )
+
+        budget_check = next(
+            check
+            for check in result["checks"]
+            if check["criterion"] == "Budget-capped winner"
+        )
+        self.assertEqual(budget_check["metrics"]["actual_efficiency"], 5.0)
+        self.assertTrue(
+            any(
+                action["estimate"].get("route") == "budget_reallocator"
+                for action in result["recommendations"]
             )
         )
 

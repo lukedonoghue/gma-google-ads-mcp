@@ -23,17 +23,6 @@ SEVERITY_ORDER = {
     "not_checked": 5,
 }
 
-LEAD_QUALITY_TERMS = (
-    "lead",
-    "call",
-    "book",
-    "appointment",
-    "contact",
-    "quote",
-    "form",
-    "purchase",
-    "sale",
-)
 SUSPECT_LEAD_TERMS = (
     "page view",
     "youtube",
@@ -101,7 +90,10 @@ def _cpa(metrics: Mapping[str, float]) -> float | None:
 
 
 def _roas(metrics: Mapping[str, float]) -> float | None:
-    return _rate(metrics["conversions_value"], metrics["cost_micros"])
+    return _rate(
+        metrics["conversions_value"],
+        metrics["cost_micros"] / 1_000_000,
+    )
 
 
 def _display_change(value: float | None) -> str:
@@ -376,15 +368,17 @@ def _goal_result(
     joined = ", ".join(actions)
     lowered = joined.casefold()
     suspect = [term for term in SUSPECT_LEAD_TERMS if term in lowered]
-    has_outcome_term = any(term in lowered for term in LEAD_QUALITY_TERMS)
     needs_confirmation = (
         business_mode == "lead_gen"
         and not outcome_quality_confirmed
-        and (bool(suspect) or not has_outcome_term)
     )
     if needs_confirmation:
         status = "warning"
-        decision = "The selected goals may include actions that are not genuine enquiries."
+        decision = (
+            "The selected goals include actions that may not be genuine enquiries."
+            if suspect
+            else "The effective goals are configured, but backend lead quality has not been confirmed."
+        )
         next_step = "Confirm which actions represent genuine, non-duplicated leads before trusting CPA or automated bidding."
         candidate = _candidate(
             key="goal-quality",
@@ -392,9 +386,9 @@ def _goal_result(
             priority=1,
             severity="warning",
             title=f"Confirm what counts as a lead in {campaign['name']}",
-            reason="Automated bidding can optimise toward cheap but low-value actions when the effective goal set is mixed.",
+            reason="A sensible conversion-action name does not prove that the reported outcome is a genuine, non-duplicated lead.",
             evidence=f"{scope.replace('_', ' ')} goals: {joined}.",
-            details="Classify each effective primary action as a genuine enquiry, supporting micro-conversion, or irrelevant action. Keep genuine outcomes primary; review the rest before any bid or budget change.",
+            details="Compare each action's last-30-day count with bookings or CRM leads. Classify it as a genuine lead, supporting action, or irrelevant action; then keep only genuine outcomes primary before changing bids or budget.",
             expected_impact="Creates a trustworthy CPA and prevents bidding toward the wrong result.",
         )
         recovery = _recovery(
@@ -404,14 +398,15 @@ def _goal_result(
             action_type="user_confirmation",
             status="needs_confirmation",
             title=f"Confirm genuine lead actions for {campaign['name']}",
-            reason="The radar can name the effective actions but cannot verify backend lead quality by itself.",
+            reason="The radar can name the effective actions, but Google Ads cannot prove whether those actions became genuine leads.",
             steps=[
                 f"Review these effective actions: {joined}.",
-                "Confirm which actions create genuine, non-duplicated enquiries or bookings.",
-                "Return that confirmation to GMA so the same scope can be rerun.",
+                "Compare the last 30 days of conversions by action with bookings, call records, or CRM leads.",
+                "Mark each action as genuine lead, supporting action, or irrelevant action.",
+                "Return the classification to GMA so the same scope can be rerun.",
             ],
             resolves=["Backend outcome quality has not been confirmed"],
-            completion_signal="The account owner confirms the genuine lead actions and rejects any micro-conversions.",
+            completion_signal="Every effective action is classified and the account owner confirms which actions represent genuine, non-duplicated leads.",
             owner="account_owner",
             follow_up_kind="review_then_rerun",
         )
@@ -550,14 +545,20 @@ def _trend_result(
     if tracking_suspect:
         severity = "critical"
         decision = "A conversion-tracking break is plausible."
-        next_step = "Verify conversion actions, tags, imports, and goal settings before changing bids or budget."
+        next_step = (
+            "Check in this order: conversion action counts and tag/import diagnostics, "
+            "campaign goal settings, then the booking form or CRM feed. Fix any break and rerun before changing bids or budget."
+        )
         title = f"Investigate a possible tracking break in {campaign['name']}"
         reason = "Reported conversions fell sharply without a matching traffic decline."
         expected = "Restores confidence in reported performance before optimisation decisions are made."
     elif efficiency_bad and spend_change is not None and spend_change >= 0.20:
         severity = "critical"
         decision = "Spend rose while efficiency deteriorated materially."
-        next_step = "Inspect recent changes and the metric tree today; hold scaling until the cause is understood."
+        next_step = (
+            "Open Change history for the comparison period, then check traffic mix, "
+            "conversion tracking, devices, locations, and the landing page in that order. Hold scaling until the cause is understood."
+        )
         title = f"Investigate rising spend and weaker efficiency in {campaign['name']}"
         reason = "The campaign spent materially more while CPA/ROAS moved in the wrong direction."
         expected = "Prevents further inefficient scaling while the cause is isolated."
@@ -575,7 +576,10 @@ def _trend_result(
         if unfavorable:
             severity = "warning"
             decision = "A material unfavorable weekly movement needs review."
-            next_step = "Inspect the metric tree and recent changes; do not assume the first visible metric is the cause."
+            next_step = (
+                "Review in this order: Change history, conversion-action counts, search terms or traffic mix, "
+                "devices and locations, then the landing page or form. If no defect is found, keep settings stable for the next complete week and rerun."
+            )
             title = f"Review the weekly decline in {campaign['name']}"
             reason = "One or more GMA weekly alert thresholds moved unfavorably."
             expected = "Identifies the controllable cause before a campaign setting is changed."
@@ -604,7 +608,10 @@ def _trend_result(
     if recent_change and severity in {"critical", "warning"}:
         severity = "warning" if severity == "critical" else "info"
         decision += f" A material account change on {recent_change} is a plausible explanation."
-        next_step = "Allow the change a judgeable window, then rerun before making another material change."
+        next_step = (
+            f"Open Change history at {recent_change}, record exactly what changed, "
+            "keep the campaign stable through the next complete 7-day window, then rerun before making another material change."
+        )
 
     evidence = (
         f"Latest versus previous complete week: spend {_display_change(spend_change)}, "
@@ -674,12 +681,14 @@ def _budget_result(
     efficiency_pass = False
     actual: float | None = None
     if business_mode == "lead_gen" and conversions > 0:
-        actual = cost / conversions
+        actual_cpa_micros = cost / conversions
+        actual = actual_cpa_micros / 1_000_000
         efficiency_pass = (
-            target_cpa_micros is not None and actual <= target_cpa_micros
+            target_cpa_micros is not None
+            and actual_cpa_micros <= target_cpa_micros
         )
     elif business_mode == "ecommerce" and cost > 0:
-        actual = value / cost
+        actual = value / (cost / 1_000_000)
         efficiency_pass = target_roas is not None and actual >= target_roas
     winner = (
         target_available
@@ -735,6 +744,11 @@ def _budget_result(
                 "target_available": target_available,
                 "outcome_quality_confirmed": outcome_quality_confirmed,
                 "actual_efficiency": actual,
+                "actual_efficiency_unit": (
+                    "account_currency_per_conversion"
+                    if business_mode == "lead_gen"
+                    else "conversion_value_per_cost"
+                ),
                 "search_budget_lost_impression_share": lost,
             },
         ),
@@ -795,6 +809,97 @@ def evaluate_red_flag_radar(
             item
             for item in (policy_recovery, goal_recovery, trend_recovery)
             if item is not None
+        )
+
+    goal_candidates = [
+        item for item in candidates if item.get("_key") == "goal-quality"
+    ]
+    if goal_candidates:
+        first = goal_candidates[0]
+        affected_campaigns = sorted(
+            {
+                check["campaign_name"]
+                for check in checks
+                if check["criterion"] == "Campaign-effective conversion goals"
+                and check["status"] == "warning"
+            },
+            key=str.casefold,
+        )
+        first.update(
+            {
+                "_key": "goal-quality-account",
+                "_campaign_id": "account",
+                "entity": "Confirm what Google Ads is counting as a lead",
+                "reason": (
+                    "Google Ads can report and optimise conversions, but it cannot prove that each result became a genuine, non-duplicated lead."
+                ),
+                "evidence_summary": (
+                    f"Lead quality is unconfirmed across {len(affected_campaigns)} campaign(s): "
+                    + ", ".join(affected_campaigns)
+                    + "."
+                ),
+                "details": (
+                    "Open Goals → Summary, review conversions by action for the last 30 days, "
+                    "compare those counts with bookings, call records, or CRM leads, and classify every action as a genuine lead, supporting action, or irrelevant action. "
+                    "Return that mapping to GMA and rerun this scope."
+                ),
+                "expected_impact": (
+                    "Produces a trustworthy CPA baseline for every included campaign and unlocks safe bid and budget analysis."
+                ),
+            }
+        )
+        candidates = [
+            item
+            for item in candidates
+            if item is not first and item.get("_key") != "goal-quality"
+        ]
+        candidates.append(first)
+
+    outcome_recoveries = [
+        item for item in recoveries if item["id"].startswith("REC-OUTCOME-")
+    ]
+    if outcome_recoveries:
+        applies_to = []
+        for item in outcome_recoveries:
+            applies_to.extend(item["applies_to"])
+        applies_to.sort(key=lambda item: item["campaign_name"].casefold())
+        recoveries = [
+            item
+            for item in recoveries
+            if not item["id"].startswith("REC-OUTCOME-")
+        ]
+        recoveries.append(
+            {
+                "id": "REC-OUTCOME-ACCOUNT",
+                "priority": 1,
+                "type": "user_confirmation",
+                "status": "needs_confirmation",
+                "title": "Confirm which reported conversions are genuine leads",
+                "reason": (
+                    "Google Ads contains the conversion names and counts, but bookings, call quality, duplicates, and CRM outcomes must be confirmed by the account owner."
+                ),
+                "steps": [
+                    "Open Google Ads → Goals → Summary and view conversions by action for the last 30 days.",
+                    "Compare each action's count with bookings, qualified calls, or CRM leads for the same period.",
+                    "Classify every action as genuine lead, supporting action, or irrelevant action.",
+                    "Return the action-by-action classification to GMA and rerun Red-Flag Radar on this saved scope.",
+                ],
+                "applies_to": applies_to,
+                "resolves": [
+                    "Backend outcome quality has not been confirmed",
+                    "CPA and automated-bidding conclusions are held",
+                ],
+                "completion_signal": (
+                    "Every effective conversion action is classified and the account owner confirms which actions represent genuine, non-duplicated leads."
+                ),
+                "owner": "account_owner",
+                "follow_up": {
+                    "kind": "review_then_rerun",
+                    "module_id": "red_flag_radar",
+                    "not_before": None,
+                },
+                "selectable": True,
+            }
         )
 
     deduped: dict[tuple[str, str], dict[str, Any]] = {}
