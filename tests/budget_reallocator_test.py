@@ -22,6 +22,8 @@ def campaign(
     bidding_strategy_type: str = "MAXIMIZE_CONVERSIONS",
     average_cpc_micros: int = 2_000_000,
     goal_scope_verified: bool = True,
+    goal_scope: str = "account_default",
+    effective_conversion_actions: list[str] | None = None,
     shared: bool = False,
     recent_change: str | None = None,
     status: str = "ENABLED",
@@ -45,6 +47,9 @@ def campaign(
         "search_budget_lost_impression_share": lost_budget,
         "search_rank_lost_impression_share": lost_rank,
         "goal_scope_verified": goal_scope_verified,
+        "goal_scope": goal_scope,
+        "effective_conversion_actions": effective_conversion_actions
+        or ["Qualified lead"],
         "recent_material_change_at": recent_change,
     }
 
@@ -124,6 +129,18 @@ class BudgetReallocatorTest(unittest.TestCase):
         self.assertEqual(result["status"], "hold")
         self.assertEqual(result["applyable_action_ids"], [])
         self.assertIn("Outcome quality has not been confirmed", result["holds"])
+        self.assertEqual(
+            result["recovery_actions"][0]["id"], "REC-OUTCOME-QUALITY"
+        )
+        self.assertTrue(result["recovery_actions"][0]["selectable"])
+        self.assertIn(
+            "Qualified lead",
+            " ".join(result["recovery_actions"][0]["steps"]),
+        )
+        self.assertEqual(
+            result["recovery_actions"][0]["follow_up"]["module_id"],
+            "budget_reallocator",
+        )
 
     def test_paused_campaigns_cannot_donate_or_receive_budget(self):
         result = evaluate_budget_reallocation(
@@ -165,6 +182,10 @@ class BudgetReallocatorTest(unittest.TestCase):
                 for row in result["campaign_results"]
             )
         )
+        self.assertIn(
+            "REC-RESOLVE-CAMPAIGN-STATUS",
+            [item["id"] for item in result["recovery_actions"]],
+        )
 
     def test_mixed_rank_and_budget_constraint_routes_instead_of_scaling(self):
         result = evaluate_budget_reallocation(
@@ -190,6 +211,10 @@ class BudgetReallocatorTest(unittest.TestCase):
         self.assertFalse(row["recipient_eligible"])
         self.assertIn("Quality Score Booster", row["routes"])
         self.assertEqual(result["applyable_action_ids"], [])
+        self.assertIn(
+            "REC-RUN-QUALITY-SCORE-BOOSTER",
+            [item["id"] for item in result["recovery_actions"]],
+        )
 
     def test_net_increase_is_advisory_until_user_confirms_new_spend(self):
         base = snapshot(
@@ -253,6 +278,12 @@ class BudgetReallocatorTest(unittest.TestCase):
             result["holds"],
         )
         self.assertIn("Recent material change on 2026-07-18", result["holds"])
+        wait = next(
+            item
+            for item in result["recovery_actions"]
+            if item["id"] == "REC-WAIT-FOR-LEARNING"
+        )
+        self.assertEqual(wait["follow_up"]["not_before"], "2026-08-01")
 
     def test_low_volume_target_cpa_campaign_is_not_scaled(self):
         result = evaluate_budget_reallocation(
@@ -278,6 +309,10 @@ class BudgetReallocatorTest(unittest.TestCase):
         self.assertFalse(row["recipient_eligible"])
         self.assertIn("30 required", " ".join(row["holds"]))
         self.assertEqual(result["applyable_action_ids"], [])
+        self.assertIn(
+            "REC-COLLECT-MORE-EVIDENCE",
+            [item["id"] for item in result["recovery_actions"]],
+        )
 
     def test_ecommerce_uses_roas_to_build_a_zero_net_move(self):
         result = evaluate_budget_reallocation(
@@ -342,6 +377,9 @@ class BudgetReallocatorTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "hold")
         self.assertIn("Business CPA or ROAS target is missing", result["holds"])
+        self.assertEqual(
+            result["recovery_actions"][0]["id"], "REC-CONFIRM-TARGET"
+        )
 
     def test_performance_max_is_held_without_product_or_lead_quality_evidence(self):
         result = evaluate_budget_reallocation(
@@ -367,6 +405,10 @@ class BudgetReallocatorTest(unittest.TestCase):
         self.assertFalse(row["donor_eligible"])
         self.assertFalse(row["recipient_eligible"])
         self.assertIn("Performance Max needs", " ".join(row["holds"]))
+        self.assertIn(
+            "REC-PMAX-EVIDENCE",
+            [item["id"] for item in result["recovery_actions"]],
+        )
 
     def test_ninety_percent_impression_share_is_a_demand_ceiling(self):
         result = evaluate_budget_reallocation(

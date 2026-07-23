@@ -268,6 +268,41 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
+      "description": "Attach a canonical skill run to its matching dashboard workspace.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "name": "gma_attach_run_to_workspace",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Compare a confirmed goal with live results and sourced industry context.\n\nThis report is read-only. The user-confirmed target stays authoritative;\nindustry averages are advisory and are never written to Google Ads.",
       "inputSchema": {
         "additionalProperties": false,
@@ -341,6 +376,41 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
+      "description": "Create or reopen the persistent GMA dashboard workspace for a scope.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmed_scope_hash": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope_id",
+          "confirmed_scope_hash"
+        ],
+        "type": "object"
+      },
+      "name": "gma_create_workspace",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Return a persisted, owner-bound, schema-validated GMA run result.",
       "inputSchema": {
         "additionalProperties": false,
@@ -355,6 +425,37 @@
         "type": "object"
       },
       "name": "gma_get_run",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Return one owner-bound dashboard workspace, its runs, and Action list.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "type": "object"
+      },
+      "name": "gma_get_workspace",
       "outputSchema": {
         "additionalProperties": true,
         "type": "object"
@@ -617,6 +718,44 @@
         "type": "object"
       },
       "name": "gma_run_skill",
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Save exact dashboard selections; never validate or change Google Ads.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "selected_action_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "workspace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "selected_action_ids"
+        ],
+        "type": "object"
+      },
+      "name": "gma_update_workspace_actions",
       "outputSchema": {
         "additionalProperties": true,
         "type": "object"

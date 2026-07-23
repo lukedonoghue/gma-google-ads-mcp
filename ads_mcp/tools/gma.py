@@ -13,13 +13,17 @@ from ads_mcp.gma_runtime import (
     AccountGateway,
     GmaRuntimeError,
     ScopeGateway,
+    attach_run_to_workspace as attach_gma_run_to_workspace,
     build_goal_report as build_gma_goal_report,
+    create_workspace as create_gma_workspace,
     get_run as get_gma_run,
+    get_workspace as get_gma_workspace,
     list_goal_benchmarks as list_gma_goal_benchmarks,
     preflight as build_preflight,
     render_run as render_gma_run,
     run_skill as run_gma_skill,
     save_prepared_scope,
+    update_workspace_actions as update_gma_workspace_actions,
 )
 from ads_mcp.skill_runs.budget_reallocator import BudgetAnalysisError
 
@@ -208,5 +212,88 @@ async def render_run(run_id: str) -> dict[str, Any]:
 
     try:
         return await render_gma_run(run_id)
+    except (GmaRuntimeError, ValueError) as error:
+        raise ToolError(str(error)) from error
+
+
+@gma_mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+async def create_workspace(
+    scope_id: str,
+    confirmed_scope_hash: str,
+) -> dict[str, Any]:
+    """Create or reopen the persistent GMA dashboard workspace for a scope."""
+
+    try:
+        return await create_gma_workspace(
+            scope_id=scope_id,
+            confirmed_scope_hash=confirmed_scope_hash,
+        )
+    except (GmaRuntimeError, ValueError) as error:
+        raise ToolError(str(error)) from error
+
+
+@gma_mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+async def get_workspace(workspace_id: str) -> dict[str, Any]:
+    """Return one owner-bound dashboard workspace, its runs, and Action list."""
+
+    try:
+        return await get_gma_workspace(workspace_id)
+    except (GmaRuntimeError, ValueError) as error:
+        raise ToolError(str(error)) from error
+
+
+@gma_mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+async def attach_run_to_workspace(
+    workspace_id: str,
+    run_id: str,
+) -> dict[str, Any]:
+    """Attach a canonical skill run to its matching dashboard workspace."""
+
+    try:
+        return await attach_gma_run_to_workspace(workspace_id, run_id)
+    except (GmaRuntimeError, ValueError) as error:
+        raise ToolError(str(error)) from error
+
+
+@gma_mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+async def update_workspace_actions(
+    workspace_id: str,
+    selected_action_ids: list[str],
+) -> dict[str, Any]:
+    """Save exact dashboard selections; never validate or change Google Ads."""
+
+    try:
+        return await update_gma_workspace_actions(
+            workspace_id,
+            selected_action_ids,
+        )
     except (GmaRuntimeError, ValueError) as error:
         raise ToolError(str(error)) from error

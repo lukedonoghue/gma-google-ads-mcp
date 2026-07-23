@@ -95,6 +95,45 @@ def render_change_plan(
             "</details>"
         )
 
+    recovery_cards = []
+    for action in plan.get("recovery_actions", []):
+        campaign_names = ", ".join(
+            item.get("campaign_name", item.get("campaign_id", ""))
+            for item in action.get("applies_to", [])
+        )
+        steps = "".join(
+            f"<li>{_escape(step)}</li>" for step in action.get("steps", [])
+        )
+        follow_up = action.get("follow_up") or {}
+        follow_up_label = str(follow_up.get("kind", "")).replace("_", " ").title()
+        if follow_up.get("module_id"):
+            follow_up_label += f" · {_escape(follow_up['module_id'])}"
+        if follow_up.get("not_before"):
+            follow_up_label += f" · not before {_escape(follow_up['not_before'])}"
+        recovery_cards.append(
+            '<article class="recovery-card">'
+            f'<div class="recovery-meta">{_escape(action.get("id"))} · '
+            f'{_escape(str(action.get("status", "")).replace("_", " ").title())} · '
+            f'Owner: {_escape(str(action.get("owner", "")).replace("_", " ").title())}</div>'
+            f'<h3>{_escape(action.get("title"))}</h3>'
+            f'<p><strong>Why:</strong> {_escape(action.get("reason"))}</p>'
+            f'<p><strong>Applies to:</strong> {_escape(campaign_names)}</p>'
+            f"<ol>{steps}</ol>"
+            f'<p><strong>Done when:</strong> {_escape(action.get("completion_signal"))}</p>'
+            f'<p class="recovery-follow"><strong>Then:</strong> {follow_up_label}</p>'
+            "</article>"
+        )
+    recovery_section = ""
+    if recovery_cards:
+        recovery_section = (
+            '<section class="recovery-section"><h2>Recovery plan — what to do next</h2>'
+            "<p>A safety hold blocks the risky Google Ads edit, not the account "
+            "improvement work. These tasks explain how to clear each gate and "
+            "what evidence GMA needs before rerunning.</p>"
+            + "".join(recovery_cards)
+            + "</section>"
+        )
+
     form = ""
     if can_select and any(
         action.get("applyability") == "applyable" for action in plan.get("actions", [])
@@ -141,6 +180,10 @@ body {{ margin: 0; padding: 32px; }} main {{ max-width: 1500px; margin: auto; ba
 h1 {{ margin: 0 0 8px; }} .meta {{ color: #4b5563; margin-bottom: 20px; }} .status {{ display: inline-block; padding: 5px 10px; border-radius: 999px; background: #e0f2fe; color: #075985; font-weight: 700; }}
 .table-wrap {{ overflow-x: auto; }} table {{ border-collapse: collapse; width: 100%; font-size: 14px; }} th, td {{ border-bottom: 1px solid #e5e7eb; padding: 12px 10px; text-align: left; vertical-align: top; }} th {{ background: #f9fafb; position: sticky; top: 0; }}
 details {{ margin: 12px 0; padding: 12px 16px; border: 1px solid #e5e7eb; border-radius: 10px; }} summary {{ cursor: pointer; font-weight: 700; }}
+.recovery-section {{ margin: 26px 0; padding: 22px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 14px; }}
+.recovery-section > h2 {{ margin-top: 0; }} .recovery-card {{ margin-top: 14px; padding: 16px; background: white; border-left: 5px solid #f59e0b; border-radius: 8px; }}
+.recovery-card h3 {{ margin: 6px 0 8px; }} .recovery-card ol {{ padding-left: 22px; }} .recovery-card li {{ margin: 7px 0; }}
+.recovery-meta, .recovery-follow {{ color: #92400e; font-weight: 700; font-size: 13px; }}
 button {{ margin-top: 20px; border: 0; border-radius: 10px; padding: 12px 18px; font-weight: 800; background: #2563eb; color: white; cursor: pointer; }} button.approve {{ background: #047857; }}
 .warning, .next, .notice {{ margin-top: 20px; padding: 14px 16px; border-radius: 10px; }} .warning {{ background: #fff7ed; }} .next {{ background: #eff6ff; }} .notice {{ background: #fef3c7; }}
 footer {{ margin-top: 28px; color: #6b7280; font-size: 13px; }}
@@ -150,6 +193,8 @@ footer {{ margin-top: 28px; color: #6b7280; font-size: 13px; }}
 <h1>GMA Change Plan</h1>
 <p class="meta"><span class="status">{_escape(_status_text(plan))}</span> · {_escape(plan.get('account_name'))} ({_escape(plan.get('customer_id'))}) · {_escape(plan.get('analysis_start'))} to {_escape(plan.get('analysis_end'))}<br>Campaigns: {_escape(campaign_names)} · Skills: {_escape(', '.join(plan.get('skills', [])))}</p>
 {notice}
+{recovery_section}
+<h2>Google Ads changes</h2>
 <div class="table-wrap"><table>
 <thead><tr><th>Select</th><th>ID</th><th>Priority</th><th>Entity</th><th>Current → proposed</th><th>Reason</th><th>Evidence summary</th><th>Risk / status</th></tr></thead>
 <tbody>{''.join(rows)}</tbody></table></div>

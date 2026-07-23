@@ -21,11 +21,12 @@ from ads_mcp.skill_runs.common import (
     trailing_complete_days,
 )
 
-RUNTIME_VERSION = "1.0.0-alpha.4"
+RUNTIME_VERSION = "1.0.0-alpha.5"
 METHODOLOGY_VERSIONS = {"budget_reallocator": "gma-budget-v1.0.0"}
-EXPECTED_PLUGIN_VERSION = "0.6.0"
+EXPECTED_PLUGIN_VERSION = "0.6.1"
 SCOPE_TTL_SECONDS = 24 * 60 * 60
 RUN_TTL_SECONDS = 90 * 24 * 60 * 60
+WORKSPACE_TTL_SECONDS = 180 * 24 * 60 * 60
 MODULES = {
     "instant_account_audit": (1, "Instant Account Audit"),
     "red_flag_radar": (2, "Red-Flag Radar"),
@@ -141,6 +142,273 @@ async def get_run(
     return result
 
 
+def _workspace_id(owner_id: str, scope_id: str) -> str:
+    digest = hashlib.sha256(f"{owner_id}:{scope_id}".encode()).hexdigest()
+    return f"ws_{digest[:32]}"
+
+
+def _workspace_scope_signature(scope: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "customer_id": str(scope["customer_id"]),
+        "login_customer_id": scope.get("login_customer_id"),
+        "analysis_start": str(scope["analysis_start"]),
+        "analysis_end": str(scope["analysis_end"]),
+        "business_mode": str(scope["business_mode"]),
+        "campaign_ids": sorted(str(item["id"]) for item in scope["campaigns"]),
+    }
+
+
+async def _hydrate_workspace(
+    payload: Mapping[str, Any],
+    *,
+    store: AsyncChangesetStore | None = None,
+    owner_resolver=None,
+) -> dict[str, Any]:
+    run_summaries: list[dict[str, Any]] = []
+    action_index: dict[str, dict[str, Any]] = {}
+    for run_id in payload.get("run_ids") or []:
+        try:
+            result = await get_run(
+                str(run_id),
+                store=store,
+                owner_resolver=owner_resolver,
+            )
+        except GmaRuntimeError:
+            run_summaries.append(
+                {"run_id": str(run_id), "status": "expired"}
+            )
+            continue
+        run_summaries.append(
+            {
+                "run_id": result["run_id"],
+                "module": result["module"],
+                "status": result["status"],
+                "assessment": result["assessment"],
+                "data_receipt": result["data_receipt"],
+                "coverage": result["coverage"],
+                "recommendation_count": len(result["recommendations"]),
+                "recovery_action_count": len(result["recovery_actions"]),
+                "core_signature": result["core_signature"],
+            }
+        )
+        for recommendation in result["recommendations"]:
+            action_index[recommendation["id"]] = {
+                "id": recommendation["id"],
+                "kind": (
+                    "google_ads_change"
+                    if recommendation["applyability"] == "applyable"
+                    else "advisory"
+                ),
+                "title": recommendation["entity"],
+                "reason": recommendation["reason"],
+                "status": recommendation["applyability"],
+                "source_run_id": result["run_id"],
+                "source_module": result["module"],
+                "change_plan_id": result["change_plan"]["id"],
+            }
+        for recovery in result["recovery_actions"]:
+            action_index[recovery["id"]] = {
+                "id": recovery["id"],
+                "kind": "recovery_task",
+                "title": recovery["title"],
+                "reason": recovery["reason"],
+                "status": recovery["status"],
+                "owner": recovery["owner"],
+                "completion_signal": recovery["completion_signal"],
+                "follow_up": recovery["follow_up"],
+                "source_run_id": result["run_id"],
+                "source_module": result["module"],
+            }
+    selected_ids = list(payload.get("selected_action_ids") or [])
+    action_list = []
+    for action_id in selected_ids:
+        item = action_index.get(str(action_id))
+        if item:
+            action_list.append(deepcopy(item))
+    return {
+        "contract_version": "gma-workspace/1.0",
+        "workspace_id": payload["workspace_id"],
+        "scope_id": payload["scope_id"],
+        "scope_hash": payload["scope_hash"],
+        "scope": deepcopy(payload["scope"]),
+        "created_at": payload["created_at"],
+        "updated_at": payload["updated_at"],
+        "runs": run_summaries,
+        "available_action_count": len(action_index),
+        "selected_action_ids": selected_ids,
+        "action_list": action_list,
+    }
+
+
+async def create_workspace(
+    *,
+    scope_id: str,
+    confirmed_scope_hash: str,
+    store: AsyncChangesetStore | None = None,
+    owner_resolver=None,
+) -> dict[str, Any]:
+    """Create or reopen the owner-bound dashboard workspace for one scope."""
+
+    selected_store = _store_or_default(store)
+    owner_id = _owner_or_default(owner_resolver)
+    scope = await get_prepared_scope(
+        scope_id,
+        confirmed_scope_hash,
+        store=selected_store,
+        owner_resolver=owner_resolver,
+    )
+    workspace_id = _workspace_id(owner_id, scope_id)
+    existing = await selected_store.get(workspace_id)
+    if existing:
+        if (
+            existing.get("owner_id") != owner_id
+            or existing.get("scope_hash") != confirmed_scope_hash
+        ):
+            raise GmaRuntimeError(
+                "The existing workspace does not match this confirmed scope"
+            )
+        return await _hydrate_workspace(
+            existing,
+            store=selected_store,
+            owner_resolver=owner_resolver,
+        )
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "workspace_id": workspace_id,
+        "owner_id": owner_id,
+        "scope_id": scope_id,
+        "scope_hash": confirmed_scope_hash,
+        "scope": deepcopy(scope),
+        "scope_signature": _workspace_scope_signature(scope),
+        "run_ids": [],
+        "selected_action_ids": [],
+        "created_at": now,
+        "updated_at": now,
+    }
+    await selected_store.put(
+        workspace_id,
+        payload,
+        ttl=WORKSPACE_TTL_SECONDS,
+    )
+    return await _hydrate_workspace(
+        payload,
+        store=selected_store,
+        owner_resolver=owner_resolver,
+    )
+
+
+async def get_workspace(
+    workspace_id: str,
+    *,
+    store: AsyncChangesetStore | None = None,
+    owner_resolver=None,
+) -> dict[str, Any]:
+    """Return the durable run list and shared Action list for one workspace."""
+
+    if not re.fullmatch(r"ws_[a-f0-9]{32}", workspace_id):
+        raise GmaRuntimeError("Workspace ID is invalid")
+    selected_store = _store_or_default(store)
+    owner_id = _owner_or_default(owner_resolver)
+    payload = await selected_store.get(workspace_id)
+    if not payload or payload.get("owner_id") != owner_id:
+        raise GmaRuntimeError("GMA workspace was not found or has expired")
+    return await _hydrate_workspace(
+        payload,
+        store=selected_store,
+        owner_resolver=owner_resolver,
+    )
+
+
+async def attach_run_to_workspace(
+    workspace_id: str,
+    run_id: str,
+    *,
+    store: AsyncChangesetStore | None = None,
+    owner_resolver=None,
+) -> dict[str, Any]:
+    """Attach one canonical run to its matching workspace, idempotently."""
+
+    selected_store = _store_or_default(store)
+    owner_id = _owner_or_default(owner_resolver)
+    payload = await selected_store.get(workspace_id)
+    if not payload or payload.get("owner_id") != owner_id:
+        raise GmaRuntimeError("GMA workspace was not found or has expired")
+    result = await get_run(
+        run_id,
+        store=selected_store,
+        owner_resolver=owner_resolver,
+    )
+    if _workspace_scope_signature(result["scope"]) != payload.get(
+        "scope_signature"
+    ):
+        raise GmaRuntimeError(
+            "This run belongs to a different account, date, campaign, or business scope"
+        )
+    run_ids = list(payload.get("run_ids") or [])
+    if run_id not in run_ids:
+        run_ids.append(run_id)
+    payload = deepcopy(dict(payload))
+    payload["run_ids"] = run_ids
+    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await selected_store.put(
+        workspace_id,
+        payload,
+        ttl=WORKSPACE_TTL_SECONDS,
+    )
+    return await _hydrate_workspace(
+        payload,
+        store=selected_store,
+        owner_resolver=owner_resolver,
+    )
+
+
+async def update_workspace_actions(
+    workspace_id: str,
+    selected_action_ids: Sequence[str],
+    *,
+    store: AsyncChangesetStore | None = None,
+    owner_resolver=None,
+) -> dict[str, Any]:
+    """Save exact dashboard selections without validating or changing Google Ads."""
+
+    selected_store = _store_or_default(store)
+    owner_id = _owner_or_default(owner_resolver)
+    payload = await selected_store.get(workspace_id)
+    if not payload or payload.get("owner_id") != owner_id:
+        raise GmaRuntimeError("GMA workspace was not found or has expired")
+    available_ids: set[str] = set()
+    for run_id in payload.get("run_ids") or []:
+        try:
+            result = await get_run(
+                str(run_id),
+                store=selected_store,
+                owner_resolver=owner_resolver,
+            )
+        except GmaRuntimeError:
+            continue
+        available_ids.update(item["id"] for item in result["recommendations"])
+        available_ids.update(item["id"] for item in result["recovery_actions"])
+    normalized_ids = list(dict.fromkeys(str(value) for value in selected_action_ids))
+    unknown = sorted(set(normalized_ids).difference(available_ids))
+    if unknown:
+        raise GmaRuntimeError(
+            "Action IDs are not available in this workspace: " + ", ".join(unknown)
+        )
+    payload = deepcopy(dict(payload))
+    payload["selected_action_ids"] = normalized_ids
+    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await selected_store.put(
+        workspace_id,
+        payload,
+        ttl=WORKSPACE_TTL_SECONDS,
+    )
+    return await _hydrate_workspace(
+        payload,
+        store=selected_store,
+        owner_resolver=owner_resolver,
+    )
+
+
 def _enum(value: Any) -> str:
     name = getattr(value, "name", None)
     return name if isinstance(name, str) else str(value).rsplit(".", 1)[-1]
@@ -232,10 +500,52 @@ def render_run_result(result: Mapping[str, Any]) -> str:
             f"| {_text(check.get('campaign_name'))} | {decision} | {why} |"
         )
 
-    lines.extend(["", "## Suggested changes", ""])
+    recovery_actions = result.get("recovery_actions") or []
+    lines.extend(["", "## Recovery plan", ""])
+    if not recovery_actions:
+        lines.append(
+            "No prerequisite or recovery task is required for this run."
+        )
+    for action in recovery_actions:
+        affected = ", ".join(
+            _text(item.get("campaign_name"))
+            for item in action.get("applies_to") or []
+        )
+        lines.extend(
+            [
+                f"### {_text(action['id'])} — {_text(action['title'])}",
+                "",
+                (
+                    f"**Status:** {_text(action.get('status')).replace('_', ' ').title()} "
+                    f"· **Owner:** {_text(action.get('owner')).replace('_', ' ').title()}"
+                ),
+                "",
+                f"**Why:** {_text(action.get('reason'))}",
+                "",
+            ]
+        )
+        if affected:
+            lines.extend([f"**Applies to:** {affected}", ""])
+        lines.append("**What to do:**")
+        lines.extend(
+            f"{index}. {_text(step)}"
+            for index, step in enumerate(action.get("steps") or [], start=1)
+        )
+        lines.extend(
+            [
+                "",
+                f"**Done when:** {_text(action.get('completion_signal'))}",
+                "",
+            ]
+        )
+
+    lines.extend(["## Google Ads changes", ""])
     recommendations = result["recommendations"]
     if not recommendations:
-        lines.append("No budget change passed every safety and evidence gate.")
+        lines.append(
+            "No budget edit passed every safety and evidence gate. "
+            "Use the Recovery plan above to unlock a defensible rerun."
+        )
     for recommendation in recommendations:
         lines.extend(
             [
@@ -269,14 +579,24 @@ def render_run_result(result: Mapping[str, Any]) -> str:
             "No API coverage gaps were recorded for this selected scope."
         )
     change_plan = result.get("change_plan") or {}
-    lines.extend(
-        [
-            "",
-            "## Next step",
-            "",
-            "Google Ads has **not** been changed. Select recommendation IDs to validate.",
-        ]
-    )
+    lines.extend(["", "## Next step", ""])
+    applyable_ids = change_plan.get("applyable_action_ids") or []
+    if applyable_ids:
+        lines.append(
+            "Google Ads has **not** been changed. Select exact budget-change IDs "
+            "to validate, or recovery-task IDs to add to the Action list."
+        )
+    elif recovery_actions:
+        lines.append(
+            "Google Ads has **not** been changed. Select recovery-task IDs to add "
+            "to the Action list, or give GMA the confirmation requested by the "
+            "highest-priority task so it can rerun this skill."
+        )
+    else:
+        lines.append(
+            "Google Ads has **not** been changed. Keep the current settings and "
+            "rerun when a fresh evidence window is available."
+        )
     if change_plan.get("review_url"):
         lines.append(f"Private Change Plan: {_text(change_plan['review_url'])}")
     return "\n".join(lines)
@@ -298,6 +618,7 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
         "checks",
         "assessment",
         "recommendations",
+        "recovery_actions",
         "unavailable_evidence",
         "change_plan",
         "renderers",
@@ -313,7 +634,7 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
         raise GmaRuntimeError(
             "Runtime result has unknown fields: " + ", ".join(unknown)
         )
-    if result["contract_version"] != "gma-run-result/1.0":
+    if result["contract_version"] != "gma-run-result/1.1":
         raise GmaRuntimeError("Runtime result has an invalid contract version")
     if not re.fullmatch(r"run_[a-f0-9]{32}", str(result["run_id"])):
         raise GmaRuntimeError("Runtime result has an invalid run ID")
@@ -429,7 +750,10 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
         "recipient_eligible",
         "donor_eligible",
         "holds",
+        "hold_codes",
         "routes",
+        "goal_scope",
+        "effective_conversion_actions",
         "clicks_per_day",
         "conversion_volume",
         "scaling_volume_floor",
@@ -447,7 +771,15 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
             check["routes"], list
         ):
             raise GmaRuntimeError(
-                "Runtime check holds and routes must be lists"
+                "Runtime check holds, hold codes, routes, and conversion actions "
+                "must be lists"
+            )
+        if not isinstance(check["hold_codes"], list) or not isinstance(
+            check["effective_conversion_actions"], list
+        ):
+            raise GmaRuntimeError(
+                "Runtime check holds, hold codes, routes, and conversion actions "
+                "must be lists"
             )
 
     assessment = result["assessment"]
@@ -533,6 +865,109 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
         action_ids.append(action_id)
     if len(action_ids) != len(set(action_ids)):
         raise GmaRuntimeError("Runtime recommendation IDs must be unique")
+    if not isinstance(result["recovery_actions"], list):
+        raise GmaRuntimeError("Runtime recovery actions must be a list")
+    recovery_fields = {
+        "id",
+        "priority",
+        "type",
+        "status",
+        "title",
+        "reason",
+        "steps",
+        "applies_to",
+        "resolves",
+        "completion_signal",
+        "owner",
+        "follow_up",
+        "selectable",
+    }
+    recovery_ids: list[str] = []
+    for recovery in result["recovery_actions"]:
+        if not isinstance(recovery, Mapping) or set(recovery) != recovery_fields:
+            raise GmaRuntimeError(
+                "Runtime result contains an invalid recovery action"
+            )
+        recovery_id = str(recovery.get("id", ""))
+        if not re.fullmatch(r"REC-[A-Z0-9-]{1,60}", recovery_id):
+            raise GmaRuntimeError(
+                "Runtime recovery action has an invalid action ID"
+            )
+        if recovery.get("status") not in {
+            "ready",
+            "waiting",
+            "needs_confirmation",
+        }:
+            raise GmaRuntimeError(
+                f"Runtime recovery action {recovery_id} has an invalid status"
+            )
+        if recovery.get("owner") not in {
+            "account_owner",
+            "google_ads_admin",
+            "gma",
+        }:
+            raise GmaRuntimeError(
+                f"Runtime recovery action {recovery_id} has an invalid owner"
+            )
+        if (
+            not isinstance(recovery.get("steps"), list)
+            or not recovery["steps"]
+            or not all(isinstance(step, str) and step.strip() for step in recovery["steps"])
+            or not isinstance(recovery.get("applies_to"), list)
+            or not recovery["applies_to"]
+            or not isinstance(recovery.get("resolves"), list)
+            or recovery.get("selectable") is not True
+        ):
+            raise GmaRuntimeError(
+                f"Runtime recovery action {recovery_id} is incomplete"
+            )
+        for entity in recovery["applies_to"]:
+            if (
+                not isinstance(entity, Mapping)
+                or set(entity) != {"campaign_id", "campaign_name"}
+                or not re.fullmatch(r"\d{1,20}", str(entity["campaign_id"]))
+            ):
+                raise GmaRuntimeError(
+                    f"Runtime recovery action {recovery_id} has invalid scope"
+                )
+        follow_up = recovery.get("follow_up")
+        if not isinstance(follow_up, Mapping) or set(follow_up) != {
+            "kind",
+            "module_id",
+            "not_before",
+        }:
+            raise GmaRuntimeError(
+                f"Runtime recovery action {recovery_id} has invalid follow-up"
+            )
+        if follow_up["kind"] not in {
+            "rerun_current_skill",
+            "run_named_skill",
+            "review_then_rerun",
+            "monitor",
+        }:
+            raise GmaRuntimeError(
+                f"Runtime recovery action {recovery_id} has invalid follow-up kind"
+            )
+        module_id = follow_up.get("module_id")
+        if module_id is not None and module_id not in MODULES:
+            raise GmaRuntimeError(
+                f"Runtime recovery action {recovery_id} has an unknown module"
+            )
+        not_before = follow_up.get("not_before")
+        if not_before is not None:
+            try:
+                date.fromisoformat(str(not_before))
+            except ValueError as error:
+                raise GmaRuntimeError(
+                    f"Runtime recovery action {recovery_id} has an invalid hold date"
+                ) from error
+        recovery_ids.append(recovery_id)
+    if len(recovery_ids) != len(set(recovery_ids)):
+        raise GmaRuntimeError("Runtime recovery action IDs must be unique")
+    if result["status"] == "blocked" and not result["recovery_actions"]:
+        raise GmaRuntimeError(
+            "A blocked runtime result must contain a recovery plan"
+        )
     if not isinstance(result["unavailable_evidence"], list):
         raise GmaRuntimeError("Runtime unavailable evidence must be a list")
     if result["unavailable_evidence"] != coverage["gaps"]:
@@ -1099,7 +1534,7 @@ async def run_skill(
         else (100.0 if len(analyzed_ids) == len(scope["campaigns"]) else None)
     )
     result: dict[str, Any] = {
-        "contract_version": "gma-run-result/1.0",
+        "contract_version": "gma-run-result/1.1",
         "run_id": raw["change_plan"]["id"].replace("gma_", "run_", 1),
         "runtime_version": RUNTIME_VERSION,
         "methodology_version": METHODOLOGY_VERSIONS[module_id],
@@ -1135,6 +1570,7 @@ async def run_skill(
             "structural_budget_check": raw["structural_budget_check"],
         },
         "recommendations": recommendations,
+        "recovery_actions": [dict(action) for action in raw["recovery_actions"]],
         "unavailable_evidence": gaps,
         "change_plan": raw["change_plan"],
         "renderers": {

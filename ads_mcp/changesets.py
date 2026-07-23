@@ -381,6 +381,96 @@ def _normalize_action(
     }
 
 
+def _normalize_recovery_action(
+    raw: Mapping[str, Any], campaign_ids: set[str]
+) -> dict[str, Any]:
+    if not isinstance(raw, Mapping):
+        raise ChangesetError("Each recovery action must be an object")
+    action_id = _bounded_text(raw.get("id"), "recovery_action.id", 64)
+    if not re.fullmatch(r"REC-[A-Z0-9-]{1,60}", action_id):
+        raise ChangesetError("Recovery action IDs must use the REC- prefix")
+    steps = raw.get("steps") or []
+    if (
+        not isinstance(steps, list)
+        or not steps
+        or not all(isinstance(step, str) and step.strip() for step in steps)
+    ):
+        raise ChangesetError(f"{action_id} must contain concrete recovery steps")
+    applies_to = raw.get("applies_to") or []
+    if not isinstance(applies_to, list) or not applies_to:
+        raise ChangesetError(f"{action_id} must identify affected campaigns")
+    normalized_scope = []
+    for entity in applies_to:
+        if not isinstance(entity, Mapping):
+            raise ChangesetError(f"{action_id} has an invalid affected campaign")
+        campaign_id = str(entity.get("campaign_id", "")).strip()
+        if campaign_id not in campaign_ids:
+            raise ChangesetError(
+                f"{action_id} references a campaign outside the Change Plan"
+            )
+        normalized_scope.append(
+            {
+                "campaign_id": campaign_id,
+                "campaign_name": _bounded_text(
+                    entity.get("campaign_name"),
+                    "recovery_action.campaign_name",
+                    250,
+                ),
+            }
+        )
+    follow_up = raw.get("follow_up") or {}
+    if not isinstance(follow_up, Mapping):
+        raise ChangesetError(f"{action_id} has an invalid follow-up")
+    return {
+        "id": action_id,
+        "priority": int(raw.get("priority", 3)),
+        "type": _bounded_text(raw.get("type"), "recovery_action.type", 64),
+        "status": _bounded_text(raw.get("status"), "recovery_action.status", 32),
+        "title": _bounded_text(raw.get("title"), "recovery_action.title", 250),
+        "reason": _bounded_text(raw.get("reason"), "recovery_action.reason", 1_500),
+        "steps": [
+            _bounded_text(step, "recovery_action.step", 1_500)
+            for step in steps[:8]
+        ],
+        "applies_to": normalized_scope,
+        "resolves": [
+            _bounded_text(item, "recovery_action.resolves", 500)
+            for item in (raw.get("resolves") or [])[:20]
+        ],
+        "completion_signal": _bounded_text(
+            raw.get("completion_signal"),
+            "recovery_action.completion_signal",
+            1_500,
+        ),
+        "owner": _bounded_text(raw.get("owner"), "recovery_action.owner", 40),
+        "follow_up": {
+            "kind": _bounded_text(
+                follow_up.get("kind"), "recovery_action.follow_up.kind", 64
+            ),
+            "module_id": (
+                _bounded_text(
+                    follow_up.get("module_id"),
+                    "recovery_action.follow_up.module_id",
+                    64,
+                )
+                if follow_up.get("module_id")
+                else None
+            ),
+            "not_before": (
+                _bounded_text(
+                    follow_up.get("not_before"),
+                    "recovery_action.follow_up.not_before",
+                    10,
+                )
+                if follow_up.get("not_before")
+                else None
+            ),
+        },
+        "selectable": True,
+        "completion_status": "open",
+    }
+
+
 def _normalize_plan(
     raw: Mapping[str, Any], owner_id: str, now: datetime
 ) -> dict[str, Any]:
@@ -433,6 +523,26 @@ def _normalize_plan(
     action_ids = [action["id"] for action in actions]
     if len(action_ids) != len(set(action_ids)):
         raise ChangesetError("Action IDs must be unique within a changeset")
+    raw_recovery_actions = raw.get("recovery_actions") or []
+    if (
+        not isinstance(raw_recovery_actions, list)
+        or len(raw_recovery_actions) > MAX_ACTIONS
+    ):
+        raise ChangesetError(
+            f"recovery_actions must contain at most {MAX_ACTIONS} items"
+        )
+    recovery_actions = [
+        _normalize_recovery_action(
+            action,
+            {campaign["id"] for campaign in normalized_campaigns},
+        )
+        for action in raw_recovery_actions
+    ]
+    recovery_ids = [action["id"] for action in recovery_actions]
+    if len(recovery_ids) != len(set(recovery_ids)):
+        raise ChangesetError("Recovery action IDs must be unique within a changeset")
+    if set(recovery_ids).intersection(action_ids):
+        raise ChangesetError("Recovery and Google Ads action IDs must be distinct")
 
     changeset_id = f"gma_{uuid.uuid4().hex}"
     created_at = _iso(now)
@@ -465,6 +575,7 @@ def _normalize_plan(
             for item in (raw.get("data_quality_holds") or [])[:30]
         ],
         "actions": actions,
+        "recovery_actions": recovery_actions,
         "selected_action_ids": [],
         "operation_hash": None,
         "validation": {"status": "not_validated"},

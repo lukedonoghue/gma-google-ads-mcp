@@ -462,6 +462,7 @@ class BudgetReallocatorRunService:
                 "coverage_gaps": snapshot["coverage_gaps"],
                 "data_quality_holds": result["holds"],
                 "actions": result["recommendations"],
+                "recovery_actions": result["recovery_actions"],
             }
         )
         result["account"] = {

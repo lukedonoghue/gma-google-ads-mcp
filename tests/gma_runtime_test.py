@@ -14,13 +14,17 @@ from ads_mcp.gma_runtime import (
     EXPECTED_PLUGIN_VERSION,
     GmaRuntimeError,
     ScopeGateway,
+    attach_run_to_workspace,
     build_goal_report,
+    create_workspace,
     get_run,
+    get_workspace,
     list_goal_benchmarks,
     preflight,
     render_run,
     run_skill,
     save_prepared_scope,
+    update_workspace_actions,
     validate_run_result,
 )
 
@@ -223,7 +227,10 @@ def campaign_check(campaign_id, name, *, recipient=False, donor=False):
         "recipient_eligible": recipient,
         "donor_eligible": donor,
         "holds": [],
+        "hold_codes": [],
         "routes": [],
+        "goal_scope": "account_default",
+        "effective_conversion_actions": ["Qualified lead"],
         "clicks_per_day": 5.0,
         "conversion_volume": 40.0,
         "scaling_volume_floor": 30,
@@ -270,6 +277,7 @@ def raw_budget_result():
             budget_action("BR-001", "101", 20_000_000, 16_000_000),
             budget_action("BR-002", "202", 20_000_000, 24_000_000),
         ],
+        "recovery_actions": [],
         "holds": [],
         "coverage_gaps": [],
         "structural_budget_check": {"monthly_cap_micros": 1_216_000_000},
@@ -292,6 +300,59 @@ def raw_budget_result():
 class FakeBudgetService:
     async def run(self, **_kwargs):
         return raw_budget_result()
+
+
+class FakeBlockedBudgetService:
+    async def run(self, **_kwargs):
+        result = raw_budget_result()
+        result["status"] = "hold"
+        result["conclusion"] = (
+            "No budget edit is safe until outcome quality is confirmed."
+        )
+        result["campaign_results"] = [result["campaign_results"][0]]
+        result["campaigns_analyzed"] = 1
+        result["campaign_results"][0]["holds"] = [
+            "Outcome quality has not been confirmed"
+        ]
+        result["campaign_results"][0]["hold_codes"] = [
+            "OUTCOME_QUALITY_UNCONFIRMED"
+        ]
+        result["recommendations"] = []
+        result["holds"] = ["Outcome quality has not been confirmed"]
+        result["recovery_actions"] = [
+            {
+                "id": "REC-OUTCOME-QUALITY",
+                "priority": 1,
+                "type": "user_confirmation",
+                "status": "needs_confirmation",
+                "title": "Confirm which reported conversions are genuine leads",
+                "reason": "Budget must not follow unverified lead counts.",
+                "steps": [
+                    "Review the effective conversion action named Qualified lead.",
+                    "Confirm whether it represents a genuine, non-duplicated enquiry.",
+                    "Return the confirmation to GMA and rerun with fresh data.",
+                ],
+                "applies_to": [
+                    {
+                        "campaign_id": "101",
+                        "campaign_name": "Search | Weak",
+                    }
+                ],
+                "resolves": ["Outcome quality has not been confirmed"],
+                "completion_signal": (
+                    "The account owner confirms genuine, non-duplicated outcomes."
+                ),
+                "owner": "account_owner",
+                "follow_up": {
+                    "kind": "review_then_rerun",
+                    "module_id": "budget_reallocator",
+                    "not_before": None,
+                },
+                "selectable": True,
+            }
+        ]
+        result["change_plan"]["applyable_action_ids"] = []
+        return result
 
 
 class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
@@ -454,6 +515,92 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 scope_id=prepared["scope_id"],
                 confirmed_scope_hash="b" * 64,
                 business_inputs={},
+                store=self.store,
+                owner_resolver=self.owner,
+            )
+
+    async def test_blocked_run_renders_an_actionable_recovery_plan(self):
+        prepared = await self._save_scope()
+        with patch(
+            "ads_mcp.gma_runtime.BudgetReallocatorRunService",
+            return_value=FakeBlockedBudgetService(),
+        ):
+            result = await run_skill(
+                module_id="budget_reallocator",
+                scope_id=prepared["scope_id"],
+                confirmed_scope_hash=prepared["scope_hash"],
+                business_inputs={"target_cpa": 50},
+                store=self.store,
+                owner_resolver=self.owner,
+            )
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(
+            result["recovery_actions"][0]["id"], "REC-OUTCOME-QUALITY"
+        )
+        rendered = await render_run(
+            result["run_id"], store=self.store, owner_resolver=self.owner
+        )
+        self.assertIn("## Recovery plan", rendered["content"])
+        self.assertIn("REC-OUTCOME-QUALITY", rendered["content"])
+        self.assertIn("**Done when:**", rendered["content"])
+        self.assertIn(
+            "Select recovery-task IDs to add to the Action list",
+            rendered["content"],
+        )
+
+    async def test_workspace_persists_runs_and_recovery_task_selections(self):
+        prepared = await self._save_scope()
+        workspace = await create_workspace(
+            scope_id=prepared["scope_id"],
+            confirmed_scope_hash=prepared["scope_hash"],
+            store=self.store,
+            owner_resolver=self.owner,
+        )
+        with patch(
+            "ads_mcp.gma_runtime.BudgetReallocatorRunService",
+            return_value=FakeBlockedBudgetService(),
+        ):
+            result = await run_skill(
+                module_id="budget_reallocator",
+                scope_id=prepared["scope_id"],
+                confirmed_scope_hash=prepared["scope_hash"],
+                business_inputs={"target_cpa": 50},
+                store=self.store,
+                owner_resolver=self.owner,
+            )
+        attached = await attach_run_to_workspace(
+            workspace["workspace_id"],
+            result["run_id"],
+            store=self.store,
+            owner_resolver=self.owner,
+        )
+        self.assertEqual(attached["runs"][0]["status"], "blocked")
+        self.assertEqual(attached["available_action_count"], 1)
+
+        selected = await update_workspace_actions(
+            workspace["workspace_id"],
+            ["REC-OUTCOME-QUALITY"],
+            store=self.store,
+            owner_resolver=self.owner,
+        )
+        self.assertEqual(
+            selected["selected_action_ids"], ["REC-OUTCOME-QUALITY"]
+        )
+        self.assertEqual(selected["action_list"][0]["kind"], "recovery_task")
+        reopened = await get_workspace(
+            workspace["workspace_id"],
+            store=self.store,
+            owner_resolver=self.owner,
+        )
+        self.assertEqual(
+            reopened["action_list"][0]["completion_signal"],
+            "The account owner confirms genuine, non-duplicated outcomes.",
+        )
+        with self.assertRaisesRegex(GmaRuntimeError, "not available"):
+            await update_workspace_actions(
+                workspace["workspace_id"],
+                ["REC-NOT-IN-THIS-RUN"],
                 store=self.store,
                 owner_resolver=self.owner,
             )
