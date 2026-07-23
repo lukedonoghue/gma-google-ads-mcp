@@ -118,9 +118,13 @@ class ScopeQueryService:
                         bidding_strategy="",
                         bidding_strategy_type="MAXIMIZE_CONVERSIONS",
                         target_cpa=SimpleNamespace(target_cpa_micros=0),
-                        maximize_conversions=SimpleNamespace(target_cpa_micros=0),
+                        maximize_conversions=SimpleNamespace(
+                            target_cpa_micros=0
+                        ),
                         target_roas=SimpleNamespace(target_roas=0),
-                        maximize_conversion_value=SimpleNamespace(target_roas=0),
+                        maximize_conversion_value=SimpleNamespace(
+                            target_roas=0
+                        ),
                     )
                 ),
                 SimpleNamespace(
@@ -131,10 +135,16 @@ class ScopeQueryService:
                         advertising_channel_type="SEARCH",
                         bidding_strategy="",
                         bidding_strategy_type="TARGET_CPA",
-                        target_cpa=SimpleNamespace(target_cpa_micros=10_000_000),
-                        maximize_conversions=SimpleNamespace(target_cpa_micros=0),
+                        target_cpa=SimpleNamespace(
+                            target_cpa_micros=10_000_000
+                        ),
+                        maximize_conversions=SimpleNamespace(
+                            target_cpa_micros=0
+                        ),
                         target_roas=SimpleNamespace(target_roas=0),
-                        maximize_conversion_value=SimpleNamespace(target_roas=0),
+                        maximize_conversion_value=SimpleNamespace(
+                            target_roas=0
+                        ),
                     )
                 ),
                 SimpleNamespace(
@@ -145,10 +155,16 @@ class ScopeQueryService:
                         advertising_channel_type="SEARCH",
                         bidding_strategy="",
                         bidding_strategy_type="TARGET_CPA",
-                        target_cpa=SimpleNamespace(target_cpa_micros=50_000_000),
-                        maximize_conversions=SimpleNamespace(target_cpa_micros=0),
+                        target_cpa=SimpleNamespace(
+                            target_cpa_micros=50_000_000
+                        ),
+                        maximize_conversions=SimpleNamespace(
+                            target_cpa_micros=0
+                        ),
                         target_roas=SimpleNamespace(target_roas=0),
-                        maximize_conversion_value=SimpleNamespace(target_roas=0),
+                        maximize_conversion_value=SimpleNamespace(
+                            target_roas=0
+                        ),
                     )
                 ),
             ]
@@ -205,7 +221,9 @@ def campaign_check(campaign_id, name, *, recipient=False, donor=False):
         "status": "ENABLED",
         "channel_type": "SEARCH",
         "efficiency": {"status": "profitable", "actual": 40, "target": 50},
-        "constraint": ("budget_limited" if recipient else "not_materially_limited"),
+        "constraint": (
+            "budget_limited" if recipient else "not_materially_limited"
+        ),
         "recipient_eligible": recipient,
         "donor_eligible": donor,
         "holds": [],
@@ -296,7 +314,9 @@ class FakeBlockedBudgetService:
         result["campaign_results"][0]["holds"] = [
             "Outcome quality has not been confirmed"
         ]
-        result["campaign_results"][0]["hold_codes"] = ["OUTCOME_QUALITY_UNCONFIRMED"]
+        result["campaign_results"][0]["hold_codes"] = [
+            "OUTCOME_QUALITY_UNCONFIRMED"
+        ]
         result["recommendations"] = []
         result["holds"] = ["Outcome quality has not been confirmed"]
         result["recovery_actions"] = [
@@ -418,6 +438,135 @@ class FakeRedFlagService:
         }
 
 
+class FakeWastedSpendService:
+    async def run(self, **_kwargs):
+        return {
+            "status": "partial",
+            "conclusion": (
+                "One safe task was prepared; one business-intent confirmation remains."
+            ),
+            "campaigns_analyzed": 2,
+            "checks": [
+                {
+                    "id": "WS-TERM-001",
+                    "campaign_id": "101",
+                    "campaign_name": "Search | Weak",
+                    "criterion": "massage jobs",
+                    "status": "exclude",
+                    "evidence": "USD 75.00 spent with zero conversions.",
+                    "why_it_matters": "The business confirmed job intent is irrelevant.",
+                    "decision": "Exclude the confirmed irrelevant jobs intent.",
+                    "next_step": "Add jobs to the named shared list.",
+                    "metrics": {
+                        "cost_micros": 75_000_000,
+                        "clicks": 9,
+                        "impressions": 150,
+                    },
+                    "source": "calculated",
+                },
+                {
+                    "id": "WS-TERM-002",
+                    "campaign_id": "202",
+                    "campaign_name": "Search | Proven",
+                    "criterion": "massage course",
+                    "status": "edge_case",
+                    "evidence": "USD 20.00 spent with zero conversions.",
+                    "why_it_matters": "Training may or may not be part of the offer.",
+                    "decision": "Business confirmation required.",
+                    "next_step": "Confirm whether education intent is relevant.",
+                    "metrics": {
+                        "cost_micros": 20_000_000,
+                        "clicks": 4,
+                        "impressions": 90,
+                    },
+                    "source": "calculated",
+                },
+            ],
+            "recommendations": [
+                {
+                    "id": "WS-001",
+                    "priority": 1,
+                    "severity": "warning",
+                    "evidence_label": "Calculated from live Google Ads search-term data",
+                    "entity": "Add jobs to Jobs & Careers",
+                    "resource_name": "",
+                    "operation_type": "advisory",
+                    "current_value": {"negative_keyword": None},
+                    "proposed_value": {
+                        "negative_keyword": "jobs",
+                        "match_type": "BROAD",
+                        "scope": "shared_negative_list",
+                        "destination": "Jobs & Careers",
+                    },
+                    "reason": "Job intent is confirmed irrelevant.",
+                    "evidence_summary": "USD 75.00 spent with zero conversions.",
+                    "details": "Add the broad negative after reviewing affected campaigns.",
+                    "expected_impact": "Prevents recurrence of confirmed irrelevant intent.",
+                    "estimate": {
+                        "label": "identified spend",
+                        "amount_micros": 75_000_000,
+                    },
+                    "risk": "medium",
+                    "reversible": True,
+                    "applyability": "task",
+                    "source_skill": "wasted-spend-finder",
+                }
+            ],
+            "recovery_actions": [
+                {
+                    "id": "REC-WS-CONFIRM-INTENT",
+                    "priority": 2,
+                    "type": "search_term_recovery",
+                    "status": "needs_confirmation",
+                    "title": "Confirm whether the business serves education intent",
+                    "reason": "The account data cannot prove the real-world offer.",
+                    "steps": [
+                        "Review the returned education search terms.",
+                        "Confirm whether education is offered or irrelevant.",
+                        "Rerun Wasted-Spend Finder.",
+                    ],
+                    "applies_to": [
+                        {
+                            "campaign_id": "202",
+                            "campaign_name": "Search | Proven",
+                        }
+                    ],
+                    "resolves": [
+                        "Business relevance is unconfirmed: education"
+                    ],
+                    "completion_signal": "Education intent is confirmed.",
+                    "owner": "account_owner",
+                    "follow_up": {
+                        "kind": "rerun_current_skill",
+                        "module_id": "wasted_spend_finder",
+                        "not_before": None,
+                    },
+                    "selectable": True,
+                }
+            ],
+            "holds": [],
+            "coverage_gaps": [],
+            "assessment_details": {
+                "visible_search_terms_reviewed": 2,
+                "classification_counts": {"EXCLUDE": 1, "EDGE_CASE": 1},
+                "identified_spend_on_irrelevant_queries_micros": 75_000_000,
+            },
+            "data_receipt": {
+                "source": "GMA 13 Skills Google Ads",
+                "retrieved_at": "2026-07-23T10:00:00Z",
+                "data_through": "2026-07-22",
+                "analysis_start": "2026-06-23",
+                "analysis_end": "2026-07-22",
+            },
+            "change_plan": {
+                "id": "gma_33333333333333333333333333333333",
+                "status": "draft",
+                "review_url": "https://example.test/waste-plan",
+                "applyable_action_ids": [],
+            },
+        }
+
+
 class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.store = MemoryStore()
@@ -462,7 +611,9 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [item["customer_id"] for item in result["accounts"]], ["1234567890"]
         )
-        self.assertEqual(result["accounts"][0]["login_customer_id"], "9876543210")
+        self.assertEqual(
+            result["accounts"][0]["login_customer_id"], "9876543210"
+        )
         self.assertFalse(result["selection_required"])
 
     def test_scope_keeps_paused_and_zero_spend_campaigns_and_sorts_on_fixed_30d_spend(
@@ -489,8 +640,12 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ["Enabled Spender", "Paused Spender", "Zero Spend"],
         )
         self.assertEqual(result["scope"]["campaigns"][2]["spend_micros"], 0)
-        self.assertEqual(result["scope"]["campaign_spend_window_start"], "2026-06-22")
-        self.assertEqual(result["scope"]["campaign_spend_window_end"], "2026-07-21")
+        self.assertEqual(
+            result["scope"]["campaign_spend_window_start"], "2026-06-22"
+        )
+        self.assertEqual(
+            result["scope"]["campaign_spend_window_end"], "2026-07-21"
+        )
         suggestion = result["scope"]["goal_context"]["selected_suggestion"]
         self.assertEqual(suggestion["target_cpa_micros"], 50_000_000)
         self.assertEqual(suggestion["campaign_ids"], ["303"])
@@ -530,6 +685,7 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             [
                 "instant_account_audit",
                 "red_flag_radar",
+                "wasted_spend_finder",
                 "budget_reallocator",
             ],
         )
@@ -567,7 +723,38 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             result["run_id"], store=self.store, owner_resolver=self.owner
         )
         self.assertIn("# Skill 12 — Budget Reallocator", rendered["content"])
-        self.assertIn("Google Ads has **not** been changed", rendered["content"])
+        self.assertIn(
+            "Google Ads has **not** been changed", rendered["content"]
+        )
+
+    async def test_wasted_spend_run_renders_terms_actions_and_recovery(self):
+        prepared = await self._save_scope()
+        with patch(
+            "ads_mcp.gma_runtime.WastedSpendFinderRunService",
+            return_value=FakeWastedSpendService(),
+        ):
+            result = await run_skill(
+                module_id="wasted_spend_finder",
+                scope_id=prepared["scope_id"],
+                confirmed_scope_hash=prepared["scope_hash"],
+                business_inputs={
+                    "brand_terms": ["Test Account"],
+                    "confirmed_irrelevant_themes": ["jobs"],
+                },
+                store=self.store,
+                owner_resolver=self.owner,
+            )
+
+        self.assertEqual(result["status"], "partial")
+        self.assertIn("waste_summary", result["assessment"])
+        validate_run_result(result)
+        rendered = await render_run(
+            result["run_id"], store=self.store, owner_resolver=self.owner
+        )
+        self.assertIn("# Skill 3 — Wasted-Spend Finder", rendered["content"])
+        self.assertIn("Search term “massage jobs”", rendered["content"])
+        self.assertIn("REC-WS-CONFIRM-INTENT", rendered["content"])
+        self.assertIn("WS-001", rendered["content"])
 
     async def test_run_rejects_a_scope_hash_the_user_did_not_confirm(self):
         prepared = await self._save_scope()
@@ -597,7 +784,9 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result["status"], "blocked")
-        self.assertEqual(result["recovery_actions"][0]["id"], "REC-OUTCOME-QUALITY")
+        self.assertEqual(
+            result["recovery_actions"][0]["id"], "REC-OUTCOME-QUALITY"
+        )
         rendered = await render_run(
             result["run_id"], store=self.store, owner_resolver=self.owner
         )
@@ -644,7 +833,9 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             store=self.store,
             owner_resolver=self.owner,
         )
-        self.assertEqual(selected["selected_action_ids"], ["REC-OUTCOME-QUALITY"])
+        self.assertEqual(
+            selected["selected_action_ids"], ["REC-OUTCOME-QUALITY"]
+        )
         self.assertEqual(selected["action_list"][0]["kind"], "recovery_task")
         reopened = await get_workspace(
             workspace["workspace_id"],
@@ -742,7 +933,9 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             result["checks"][0]["criterion"], "Active ad policy eligibility"
         )
         self.assertEqual(result["recommendations"][0]["applyability"], "task")
-        self.assertEqual(result["assessment"]["radar_summary"]["criteria_checked"], 2)
+        self.assertEqual(
+            result["assessment"]["radar_summary"]["criteria_checked"], 2
+        )
         rendered = await render_run(
             result["run_id"],
             store=self.store,
@@ -800,7 +993,9 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             )
 
         result["status"] = "partial"
-        with self.assertRaisesRegex(GmaRuntimeError, "must contain a recovery plan"):
+        with self.assertRaisesRegex(
+            GmaRuntimeError, "must contain a recovery plan"
+        ):
             validate_run_result(result)
 
     async def test_hybrid_budget_scope_requires_separate_campaign_groups(self):
@@ -818,7 +1013,9 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             store=self.store,
             owner_resolver=self.owner,
         )
-        with self.assertRaisesRegex(GmaRuntimeError, "separate ecommerce and lead-gen"):
+        with self.assertRaisesRegex(
+            GmaRuntimeError, "separate ecommerce and lead-gen"
+        ):
             await run_skill(
                 module_id="budget_reallocator",
                 scope_id=f"scope_{scope_hash[:24]}",

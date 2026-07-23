@@ -684,7 +684,7 @@
         "openWorldHint": true,
         "readOnlyHint": true
       },
-      "description": "Run one registered GMA module and return a schema-validated result.\n\nThis creates a review-only Change Plan but never changes Google Ads. The\nhosted runtime owns queries, normalization, calculations, gates, IDs, and\napplyability. Claude or Codex owns only conversation and explanation.",
+      "description": "Run one registered GMA module and return its finished customer report.\n\nThis creates a review-only Change Plan but never changes Google Ads. The\nhosted runtime owns queries, normalization, calculations, gates, IDs, and\napplyability. The `authoritative_report` field is the report Claude or Codex\nmust show rather than rewriting the raw result. It always includes the\nrecovery plan when a safety gate blocks a recommendation.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

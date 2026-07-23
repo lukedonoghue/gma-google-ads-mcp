@@ -20,6 +20,7 @@ from ads_mcp.gma_runtime import (
     get_workspace as get_gma_workspace,
     list_goal_benchmarks as list_gma_goal_benchmarks,
     preflight as build_preflight,
+    render_run_result,
     render_run as render_gma_run,
     run_skill as run_gma_skill,
     save_prepared_scope,
@@ -28,6 +29,22 @@ from ads_mcp.gma_runtime import (
 from ads_mcp.skill_runs.budget_reallocator import BudgetAnalysisError
 
 gma_mcp = FastMCP("gma", mask_error_details=True)
+
+
+def _with_authoritative_report(result: dict[str, Any]) -> dict[str, Any]:
+    """Attach the canonical presentation so hosts do not rebuild the report."""
+
+    return {
+        **result,
+        "authoritative_report": {
+            "content_type": "text/markdown",
+            "presentation_rule": (
+                "Show this report as returned. Do not omit, summarize, or "
+                "rewrite its Recovery plan."
+            ),
+            "content": render_run_result(result),
+        },
+    }
 
 
 @gma_mcp.tool(
@@ -159,20 +176,23 @@ async def run_skill(
     confirmed_scope_hash: str,
     business_inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run one registered GMA module and return a schema-validated result.
+    """Run one registered GMA module and return its finished customer report.
 
     This creates a review-only Change Plan but never changes Google Ads. The
     hosted runtime owns queries, normalization, calculations, gates, IDs, and
-    applyability. Claude or Codex owns only conversation and explanation.
+    applyability. The `authoritative_report` field is the report Claude or Codex
+    must show rather than rewriting the raw result. It always includes the
+    recovery plan when a safety gate blocks a recommendation.
     """
 
     try:
-        return await run_gma_skill(
+        result = await run_gma_skill(
             module_id=module_id,
             scope_id=scope_id,
             confirmed_scope_hash=confirmed_scope_hash,
             business_inputs=business_inputs,
         )
+        return _with_authoritative_report(result)
     except (
         GmaRuntimeError,
         BudgetAnalysisError,
