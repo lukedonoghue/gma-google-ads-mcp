@@ -25,9 +25,9 @@ from ads_mcp.skill_runs.common import (
 )
 from ads_mcp.skill_runs.red_flag_service import RedFlagRadarRunService
 
-RUNTIME_VERSION = "1.0.0-alpha.10"
+RUNTIME_VERSION = "1.0.0-alpha.11"
 METHODOLOGY_VERSIONS = {
-    "instant_account_audit": "gma-instant-audit-v1.0.0",
+    "instant_account_audit": "gma-instant-audit-v1.0.1",
     "red_flag_radar": "gma-red-flag-v1.0.2",
     "budget_reallocator": "gma-budget-v1.0.0",
 }
@@ -1598,6 +1598,7 @@ async def _run_instant_account_audit(
         target_roas=inputs.get("target_roas"),
         outcome_quality_confirmed=bool(inputs.get("outcome_quality_confirmed", False)),
         brand_terms=brand_terms,
+        available_module_ids=tuple(MODULE_HANDLERS),
         analysis_start=str(scope["analysis_start"]),
         analysis_end=str(scope["analysis_end"]),
         campaign_ids=[str(item["id"]) for item in scope["campaigns"]],

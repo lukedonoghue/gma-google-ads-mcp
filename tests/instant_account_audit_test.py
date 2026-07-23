@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timezone
+from unittest.mock import Mock
 
 from ads_mcp.skill_runs.instant_account_audit import (
     evaluate_instant_account_audit,
+)
+from ads_mcp.skill_runs.instant_audit_service import (
+    GoogleAdsInstantAuditGateway,
+    _change_history_bounds,
 )
 
 
@@ -233,6 +239,94 @@ class InstantAccountAuditTest(unittest.TestCase):
             task["follow_up"]["kind"],
             "review_then_rerun",
         )
+        self.assertTrue(result["holds"])
+        self.assertTrue(
+            result["assessment_details"]["outcome_quality_circuit_breaker"]
+        )
+        gated = {
+            "A3",
+            "B4",
+            "C4",
+            "D1",
+            "D2",
+            "F1",
+            "F2",
+            "F3",
+            "H1",
+            "H2",
+            "H3",
+        }
+        checks = {check["id"]: check for check in result["checks"]}
+        self.assertTrue(
+            all(checks[check_id]["status"] == "unavailable" for check_id in gated)
+        )
+        resolved = {
+            value
+            for action in result["recovery_actions"]
+            for value in action["resolves"]
+        }
+        self.assertTrue(gated.issubset(resolved))
+
+    def test_unported_specialist_route_has_an_immediate_manual_fallback(self):
+        data = snapshot()
+        data["evidence"]["search_terms"] = [
+            {
+                "search_term": "massage near me",
+                "status": "NONE",
+                "campaign_id": "101",
+                "cost_micros": 40_000_000,
+                "conversions": 3,
+                "all_conversions": 3,
+                "clicks": 20,
+            }
+        ]
+        data["evidence"]["keywords"] = [
+            {"quality_score": 4, "impressions": 1_000}
+        ]
+
+        result = evaluate_instant_account_audit(
+            data,
+            business_mode="lead_gen",
+            target_cpa_micros=50_000_000,
+            outcome_quality_confirmed=True,
+            brand_terms=["Test"],
+            available_module_ids=[
+                "instant_account_audit",
+                "red_flag_radar",
+                "budget_reallocator",
+            ],
+        )
+
+        checks = {check["id"]: check for check in result["checks"]}
+        self.assertIn("Do this now:", checks["F3"]["next_step"])
+        self.assertIn("Do this now:", checks["G4"]["next_step"])
+        self.assertNotIn("Run Skill 4", checks["F3"]["next_step"])
+        self.assertNotIn("Run Skill 6", checks["G4"]["next_step"])
+
+    def test_optional_query_hides_provider_error_from_customer_gap(self):
+        gateway = GoogleAdsInstantAuditGateway()
+        gateway._search = Mock(side_effect=RuntimeError("private RPC details"))
+        gaps = []
+
+        rows, verified = gateway._optional_query(
+            object(),
+            "1234567890",
+            "SELECT customer.id FROM customer",
+            gap="Account evidence unavailable",
+            gaps=gaps,
+        )
+
+        self.assertEqual(rows, [])
+        self.assertFalse(verified)
+        self.assertEqual(gaps, ["Account evidence unavailable"])
+
+    def test_change_history_window_is_finite_and_api_safe(self):
+        start, end = _change_history_bounds(
+            datetime(2026, 7, 23, 12, 30, tzinfo=timezone.utc)
+        )
+
+        self.assertEqual(start, "2026-06-24 12:30:00")
+        self.assertEqual(end, "2026-07-23 12:30:00")
 
     def test_search_waste_protects_a_root_that_converted(self):
         data = snapshot()

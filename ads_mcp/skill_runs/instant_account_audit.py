@@ -335,6 +335,7 @@ def evaluate_instant_account_audit(
     target_roas: float | None = None,
     outcome_quality_confirmed: bool = False,
     brand_terms: Sequence[str] | None = None,
+    available_module_ids: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Return all 41 deterministic audit checks and bounded next actions."""
 
@@ -361,14 +362,40 @@ def evaluate_instant_account_audit(
     reference_cpa = _ratio(spend_total, conversions_total)
     reference_roas = _ratio(value_total, spend_total / 1_000_000)
     evidence = dict(snapshot.get("evidence") or {})
+    performance_trusted = bool(outcome_quality_confirmed)
     account = dict(evidence.get("account") or {})
     conversion_actions = [
         dict(item) for item in evidence.get("conversion_actions") or []
     ]
     checks: list[dict[str, Any]] = []
+    available_modules = set(
+        (
+            "instant_account_audit",
+            "red_flag_radar",
+            "budget_reallocator",
+        )
+        if available_module_ids is None
+        else available_module_ids
+    )
 
     def add(check_id: str, **kwargs: Any) -> None:
         checks.append(_check(check_id, window=window, **kwargs))
+
+    def specialist_or_manual(
+        *,
+        module_id: str,
+        number: int,
+        name: str,
+        specialist_step: str,
+        manual_step: str,
+    ) -> str:
+        if module_id in available_modules:
+            return specialist_step
+        return (
+            f"Do this now: {manual_step} "
+            f"Skill {number} — {name} is still being added to the hosted runtime, "
+            "so this manual route keeps the review moving."
+        )
 
     # A — tracking and measurement
     if evidence.get("account_verified"):
@@ -448,6 +475,22 @@ def evaluate_instant_account_audit(
             next_step="Open each selected campaign → Settings → Goals, record its goal scope and genuine primary actions, then rerun Skill 1.",
             evidence_label="Needed evidence",
             recovery_group="goal_scope",
+        )
+    elif not outcome_quality_confirmed:
+        add(
+            "A3",
+            status="unavailable",
+            scope="Selected campaigns",
+            evidence=(
+                f"{len(macro_actions)} configured primary lead/purchase action(s) "
+                "look like business outcomes, but Google Ads cannot prove they are "
+                "genuine, non-duplicated customers."
+            ),
+            standard="At least one verified genuine purchase or lead action must control campaign bidding.",
+            effect="Configured goal labels alone cannot prove that automated bidding is optimising toward real business results.",
+            next_step="Compare the named action totals with bookings, CRM leads, or purchases; classify the genuine outcomes; then rerun Skill 1.",
+            evidence_label="Business confirmation needed",
+            recovery_group="outcome_target",
         )
     else:
         add(
@@ -663,7 +706,19 @@ def evaluate_instant_account_audit(
             recovery_group="landing_page_review",
         )
     landing_pages = [dict(item) for item in evidence.get("landing_pages") or []]
-    if evidence.get("landing_pages_verified"):
+    if not performance_trusted:
+        add(
+            "B4",
+            status="unavailable",
+            scope="Landing pages",
+            evidence="Per-page clicks are available, but the reported outcomes have not been confirmed as genuine customers.",
+            standard="Landing-page efficiency requires a trusted business outcome.",
+            effect="The audit will not label a page healthy or wasteful from unverified conversion counts.",
+            next_step="Confirm which conversion actions represent genuine customers, then rerun Skill 1.",
+            evidence_label="Business confirmation needed",
+            recovery_group="outcome_target",
+        )
+    elif evidence.get("landing_pages_verified"):
         bad_pages = [
             item
             for item in landing_pages
@@ -740,7 +795,13 @@ def evaluate_instant_account_audit(
         standard="Ecommerce normally bids to trusted value; lead generation normally bids to trusted lead volume or quality.",
         effect="The wrong strategy can optimise the account toward a KPI that does not represent its economics.",
         next_step=(
-            "Run Skill 8 — Bid Strategy Check on the named campaigns before changing strategy."
+            specialist_or_manual(
+                module_id="bid_strategy_check",
+                number=8,
+                name="Bid Strategy Check",
+                specialist_step="Run Skill 8 — Bid Strategy Check on the named campaigns before changing strategy.",
+                manual_step="Open each named campaign → Settings → Bidding; record the current strategy, goal actions, target, last-30-day conversions, and actual CPA/ROAS. Keep the strategy unchanged until those facts have been reviewed.",
+            )
             if strategy_mismatches
             else "No action is needed."
         ),
@@ -765,13 +826,19 @@ def evaluate_instant_account_audit(
     add(
         "C2",
         status=(
-            "fail"
-            if volume_violations
-            else ("pass" if smart_targets else "not_applicable")
+            "unavailable"
+            if smart_targets and not performance_trusted
+            else (
+                "fail"
+                if volume_violations
+                else ("pass" if smart_targets else "not_applicable")
+            )
         ),
         scope="Major-spend automated-bidding campaigns",
         evidence=(
-            "Below GMA volume floor: " + ", ".join(volume_violations)
+            "Configured target bidding exists, but reported outcomes have not been confirmed as genuine customers."
+            if smart_targets and not performance_trusted
+            else "Below GMA volume floor: " + ", ".join(volume_violations)
             if volume_violations
             else (
                 "Every relevant target-bidding campaign met its conversion-volume floor."
@@ -782,9 +849,25 @@ def evaluate_instant_account_audit(
         standard="GMA requires 30 conversions for a tCPA decision and 50 for tROAS.",
         effect="Targets become unstable when a campaign lacks enough recent outcomes.",
         next_step=(
-            "Run Skill 8, then consolidate or loosen the target only after reviewing the campaign's live goal and learning state."
+            "Confirm the genuine outcomes, then rerun the conversion-volume check."
+            if smart_targets and not performance_trusted
+            else specialist_or_manual(
+                module_id="bid_strategy_check",
+                number=8,
+                name="Bid Strategy Check",
+                specialist_step="Run Skill 8, then consolidate or loosen the target only after reviewing the campaign's live goal and learning state.",
+                manual_step="Keep the current target unchanged, confirm the campaign's genuine 30-day outcomes, and wait until it has at least 30 conversions for tCPA or 50 for tROAS before reassessing.",
+            )
             if volume_violations
             else "No action is needed."
+        ),
+        evidence_label=(
+            "Business confirmation needed"
+            if smart_targets and not performance_trusted
+            else "Observed in live Google Ads data"
+        ),
+        recovery_group=(
+            "outcome_target" if smart_targets and not performance_trusted else None
         ),
     )
     unrealistic = []
@@ -810,13 +893,19 @@ def evaluate_instant_account_audit(
     add(
         "C3",
         status=(
-            "fail"
-            if unrealistic
-            else ("pass" if explicit_targets else "not_applicable")
+            "unavailable"
+            if explicit_targets and not performance_trusted
+            else (
+                "fail"
+                if unrealistic
+                else ("pass" if explicit_targets else "not_applicable")
+            )
         ),
         scope="Campaigns with at least 10% of spend",
         evidence=(
-            "Targets over 25% more aggressive than achieved performance: "
+            "A configured target exists, but its achieved CPA/ROAS is not trustworthy until the genuine outcomes are confirmed."
+            if explicit_targets and not performance_trusted
+            else "Targets over 25% more aggressive than achieved performance: "
             + ", ".join(sorted(set(unrealistic)))
             if unrealistic
             else (
@@ -828,9 +917,25 @@ def evaluate_instant_account_audit(
         standard="A target should not be more than 25% tighter than the campaign's recent actual result.",
         effect="An unrealistic target can suppress traffic without reaching the goal.",
         next_step=(
-            "Run Skill 8 to calculate a staged target from current achieved performance; do not tighten it further meanwhile."
+            "Confirm the genuine outcomes, then compare the configured target with achieved CPA/ROAS."
+            if explicit_targets and not performance_trusted
+            else specialist_or_manual(
+                module_id="bid_strategy_check",
+                number=8,
+                name="Bid Strategy Check",
+                specialist_step="Run Skill 8 to calculate a staged target from current achieved performance; do not tighten it further meanwhile.",
+                manual_step="Keep the target from becoming any tighter. Compare it with the campaign's genuine last-30-day CPA/ROAS and prepare a separate staged target review based on achieved performance.",
+            )
             if unrealistic
             else "No action is needed."
+        ),
+        evidence_label=(
+            "Business confirmation needed"
+            if explicit_targets and not performance_trusted
+            else "Observed in live Google Ads data"
+        ),
+        recovery_group=(
+            "outcome_target" if explicit_targets and not performance_trusted else None
         ),
     )
     avg_cpc = _ratio(
@@ -840,7 +945,10 @@ def evaluate_instant_account_audit(
         conversions_total, sum(int(item.get("clicks") or 0) for item in campaigns)
     )
     implied_cpa = _ratio(avg_cpc or 0, account_cvr or 0)
-    if business_mode == "lead_gen" and target_cpa_micros:
+    if not performance_trusted:
+        impossible = False
+        evidence_text = "A business target was supplied, but reported outcomes have not been confirmed as genuine customers."
+    elif business_mode == "lead_gen" and target_cpa_micros:
         impossible = implied_cpa is not None and implied_cpa > target_cpa_micros * 1.25
         evidence_text = (
             f"Current click price and conversion rate imply {_money(implied_cpa or 0, currency)} CPA versus "
@@ -855,12 +963,20 @@ def evaluate_instant_account_audit(
     add(
         "C4",
         status=(
-            "fail"
-            if impossible
+            "unavailable"
+            if not performance_trusted
             else (
-                "pass"
-                if (target_cpa_micros if business_mode == "lead_gen" else target_roas)
-                else "not_applicable"
+                "fail"
+                if impossible
+                else (
+                    "pass"
+                    if (
+                        target_cpa_micros
+                        if business_mode == "lead_gen"
+                        else target_roas
+                    )
+                    else "not_applicable"
+                )
             )
         ),
         scope="Account",
@@ -868,10 +984,18 @@ def evaluate_instant_account_audit(
         standard="Current click cost and conversion rate must make the stated goal achievable within 25%.",
         effect="Impossible goal math must be fixed before tactical optimisations are prioritised.",
         next_step=(
-            "Use the Goal Benchmark Report to decide whether CPC, conversion rate, offer economics, or the target itself must change."
+            "Confirm which reported actions are genuine customers, then rerun the feasibility calculation."
+            if not performance_trusted
+            else "Use the Goal Benchmark Report to decide whether CPC, conversion rate, offer economics, or the target itself must change."
             if impossible
             else "No action is needed."
         ),
+        evidence_label=(
+            "Business confirmation needed"
+            if not performance_trusted
+            else "Observed in live Google Ads data"
+        ),
+        recovery_group="outcome_target" if not performance_trusted else None,
     )
     manual_spend = sum(
         int(item.get("cost_micros") or 0)
@@ -879,18 +1003,41 @@ def evaluate_instant_account_audit(
         if item.get("bidding_strategy_type") in {"MANUAL_CPC", "MAXIMIZE_CLICKS"}
     )
     manual_share = _ratio(manual_spend, spend_total) or 0
-    manual_fail = manual_share > 0.20 and conversions_total >= 20
+    manual_candidate = manual_share > 0.20
+    manual_fail = (
+        manual_candidate and performance_trusted and conversions_total >= 20
+    )
     add(
         "C5",
-        status="fail" if manual_fail else "pass",
+        status=(
+            "unavailable"
+            if manual_candidate and not performance_trusted
+            else ("fail" if manual_fail else "pass")
+        ),
         scope="Account",
         evidence=f"{_percent(manual_share)} of spend used Manual CPC or Maximize Clicks; {conversions_total:g} conversions reported.",
         standard="When at least 20 recent conversions exist, manual/click bidding should not carry over 20% of spend without a documented exception.",
         effect="The account may be ignoring enough outcome data to use automated bidding safely.",
         next_step=(
-            "Run Skill 8 on the affected campaigns and document the exception or prepare a staged strategy change for separate approval."
+            "Confirm genuine outcome volume before deciding whether manual/click bidding should change."
+            if manual_candidate and not performance_trusted
+            else specialist_or_manual(
+                module_id="bid_strategy_check",
+                number=8,
+                name="Bid Strategy Check",
+                specialist_step="Run Skill 8 on the affected campaigns and document the exception or prepare a staged strategy change for separate approval.",
+                manual_step="List the affected campaigns, confirm their genuine outcome volume and current learning state, and document why manual/click bidding remains necessary. Keep bidding unchanged until that review is complete.",
+            )
             if manual_fail
             else "No action is needed."
+        ),
+        evidence_label=(
+            "Business confirmation needed"
+            if manual_candidate and not performance_trusted
+            else "Observed in live Google Ads data"
+        ),
+        recovery_group=(
+            "outcome_target" if manual_candidate and not performance_trusted else None
         ),
     )
     if evidence.get("change_history_verified"):
@@ -911,7 +1058,13 @@ def evaluate_instant_account_audit(
             standard="Three or more bid/target changes inside 30 days prevents a stable learning period.",
             effect="Frequent changes make it impossible to tell whether bidding is working.",
             next_step=(
-                "Stop bid/target edits, record the last change date, wait through the learning window, then rerun Skill 8."
+                specialist_or_manual(
+                    module_id="bid_strategy_check",
+                    number=8,
+                    name="Bid Strategy Check",
+                    specialist_step="Stop bid/target edits, record the last change date, wait through the learning window, then rerun Skill 8.",
+                    manual_step="Stop bid and target edits, record the most recent change date for each named campaign, and wait through a full learning window before reassessing.",
+                )
                 if thrash
                 else "No action is needed."
             ),
@@ -981,7 +1134,7 @@ def evaluate_instant_account_audit(
             ),
         )
     losers = []
-    if reference_cpa or reference_roas:
+    if performance_trusted and (reference_cpa or reference_roas):
         for item in campaigns:
             if spend_share[str(item["id"])] < 0.10 or int(item.get("clicks") or 0) < 30:
                 continue
@@ -1001,13 +1154,23 @@ def evaluate_instant_account_audit(
     add(
         "D2",
         status=(
-            "fail"
-            if losers
-            else ("pass" if (reference_cpa or reference_roas) else "not_applicable")
+            "unavailable"
+            if not performance_trusted
+            else (
+                "fail"
+                if losers
+                else (
+                    "pass"
+                    if (reference_cpa or reference_roas)
+                    else "not_applicable"
+                )
+            )
         ),
         scope="Campaigns with at least 10% of spend",
         evidence=(
-            "Campaigns at twice reference CPA / half reference ROAS: "
+            "Reported outcomes have not been confirmed as genuine customers."
+            if not performance_trusted
+            else "Campaigns at twice reference CPA / half reference ROAS: "
             + ", ".join(losers)
             if losers
             else (
@@ -1019,10 +1182,18 @@ def evaluate_instant_account_audit(
         standard="Material-spend campaigns at twice reference CPA or half reference ROAS should not remain over-funded.",
         effect="Budget can remain trapped in a proven weak lane.",
         next_step=(
-            "Run Skill 12 to evaluate safe donor eligibility; do not cut budget while tracking or learning is unresolved."
+            "Confirm the genuine outcome and CPA/ROAS target, then rerun Skill 1 before labeling a campaign as a donor."
+            if not performance_trusted
+            else "Run Skill 12 to evaluate safe donor eligibility; do not cut budget while tracking or learning is unresolved."
             if losers
             else "No action is needed."
         ),
+        evidence_label=(
+            "Business confirmation needed"
+            if not performance_trusted
+            else "Observed in live Google Ads data"
+        ),
+        recovery_group="outcome_target" if not performance_trusted else None,
     )
     shared = defaultdict(list)
     for item in campaigns:
@@ -1056,10 +1227,16 @@ def evaluate_instant_account_audit(
             mixed_pools.append(pool)
     add(
         "D3",
-        status=("fail" if mixed_pools else ("pass" if shared else "not_applicable")),
+        status=(
+            "unavailable"
+            if shared and not performance_trusted
+            else ("fail" if mixed_pools else ("pass" if shared else "not_applicable"))
+        ),
         scope="Shared budgets",
         evidence=(
-            f"{len(mixed_pools)} shared budget pool(s) require compatibility review."
+            "Shared budgets exist, but winner/loser compatibility cannot be judged until outcomes are confirmed."
+            if shared and not performance_trusted
+            else f"{len(mixed_pools)} shared budget pool(s) require compatibility review."
             if mixed_pools
             else (
                 "Shared budgets found without a mixed-pool flag."
@@ -1070,9 +1247,19 @@ def evaluate_instant_account_audit(
         standard="A shared pool must not mix proven winners and material losers.",
         effect="A weak campaign can consume a strong campaign's budget invisibly.",
         next_step=(
-            "Run Skill 12 and review every campaign in each named pool before separating or reallocating it."
+            "Confirm the genuine outcomes and business target, then rerun the shared-budget compatibility check."
+            if shared and not performance_trusted
+            else "Run Skill 12 and review every campaign in each named pool before separating or reallocating it."
             if mixed_pools
             else "No action is needed."
+        ),
+        evidence_label=(
+            "Business confirmation needed"
+            if shared and not performance_trusted
+            else "Observed in live Google Ads data"
+        ),
+        recovery_group=(
+            "outcome_target" if shared and not performance_trusted else None
         ),
     )
     rank_losers = [
@@ -1102,7 +1289,13 @@ def evaluate_instant_account_audit(
         standard="Rank-constrained campaigns need relevance, quality, or bid work before more budget.",
         effect="Raising budget does not solve auctions lost because the ad is not competitive enough.",
         next_step=(
-            "Run Skill 6 — Quality Score Booster and Skill 8 — Bid Strategy Check before considering budget."
+            specialist_or_manual(
+                module_id="quality_score_booster",
+                number=6,
+                name="Quality Score Booster",
+                specialist_step="Run Skill 6 — Quality Score Booster and Skill 8 — Bid Strategy Check before considering budget.",
+                manual_step="Review the affected campaign's keyword Quality Score components, ad relevance, landing-page experience, and current bid target. Do not add budget until the rank constraint has been diagnosed.",
+            )
             if rank_losers
             else "No action is needed."
         ),
@@ -1159,7 +1352,13 @@ def evaluate_instant_account_audit(
             standard="Brand demand should be isolated so it does not inflate non-brand performance.",
             effect="Mixed brand traffic hides the real cost of acquiring new demand.",
             next_step=(
-                "Run Skill 7 — Structure Fixer to prepare brand separation and protected negatives for review."
+                specialist_or_manual(
+                    module_id="structure_fixer",
+                    number=7,
+                    name="Structure Fixer",
+                    specialist_step="Run Skill 7 — Structure Fixer to prepare brand separation and protected negatives for review.",
+                    manual_step="Export the leaking brand queries, confirm the protected brand list, and draft a separate brand/non-brand routing plan with protected negatives for review before changing structure.",
+                )
                 if leakage
                 else "No action is needed."
             ),
@@ -1210,7 +1409,13 @@ def evaluate_instant_account_audit(
         standard="Lead generation normally centres on Search; ecommerce normally centres on Shopping/PMax.",
         effect="The account may be funding a lower-control or lower-intent lane before its core engine.",
         next_step=(
-            "Run Skill 7 to review the documented exception and design the correct campaign hierarchy before moving budget."
+            specialist_or_manual(
+                module_id="structure_fixer",
+                number=7,
+                name="Structure Fixer",
+                specialist_step="Run Skill 7 to review the documented exception and design the correct campaign hierarchy before moving budget.",
+                manual_step="Document why the current largest spend channel should lead this account, compare it with the expected core channel, and draft the intended campaign hierarchy before moving budget.",
+            )
             if lane_fail
             else "No action is needed."
         ),
@@ -1235,10 +1440,16 @@ def evaluate_instant_account_audit(
     cold_exists = any(item.get("channel_type") in COLD_CHANNELS for item in campaigns)
     add(
         "E4",
-        status=("fail" if cold_bad else ("pass" if cold_exists else "not_applicable")),
+        status=(
+            "unavailable"
+            if cold_exists and not performance_trusted
+            else ("fail" if cold_bad else ("pass" if cold_exists else "not_applicable"))
+        ),
         scope="Display, Video and Demand Gen",
         evidence=(
-            "Cold campaigns carrying material weak spend: " + ", ".join(cold_bad)
+            "Cold-audience campaigns exist, but their reported outcomes have not been confirmed as genuine customers."
+            if cold_exists and not performance_trusted
+            else "Cold campaigns carrying material weak spend: " + ", ".join(cold_bad)
             if cold_bad
             else (
                 "No cold campaign breached the spend/efficiency gate."
@@ -1249,9 +1460,25 @@ def evaluate_instant_account_audit(
         standard="Cold channels should not carry at least 15% of spend while the core lane is weak.",
         effect="Expansion spend can distract from higher-intent demand.",
         next_step=(
-            "Run Skill 7 and Skill 12; validate the core lane before preparing any cold-channel reduction."
+            "Confirm genuine outcomes, then compare the cold campaigns with the core lane."
+            if cold_exists and not performance_trusted
+            else specialist_or_manual(
+                module_id="structure_fixer",
+                number=7,
+                name="Structure Fixer",
+                specialist_step="Run Skill 7 and Skill 12; validate the core lane before preparing any cold-channel reduction.",
+                manual_step="List the cold campaigns, their spend share and genuine result, then compare them with the core Search/Shopping lane. Keep budgets unchanged until Skill 12 confirms a safe donor/receiver plan.",
+            )
             if cold_bad
             else "No action is needed."
+        ),
+        evidence_label=(
+            "Business confirmation needed"
+            if cold_exists and not performance_trusted
+            else "Observed in live Google Ads data"
+        ),
+        recovery_group=(
+            "outcome_target" if cold_exists and not performance_trusted else None
         ),
     )
     if evidence.get("search_terms_verified"):
@@ -1276,7 +1503,13 @@ def evaluate_instant_account_audit(
             standard="The same demand spread across at least three campaigns is likely cannibalisation.",
             effect="Overlap weakens traffic control and makes campaign results harder to interpret.",
             next_step=(
-                "Run Skill 7 and confirm the overlap in the Search terms report before changing keywords or negatives."
+                specialist_or_manual(
+                    module_id="structure_fixer",
+                    number=7,
+                    name="Structure Fixer",
+                    specialist_step="Run Skill 7 and confirm the overlap in the Search terms report before changing keywords or negatives.",
+                    manual_step="Export the overlapping queries with campaign, match type, spend, and outcomes; decide which campaign should own each intent before changing keywords or negatives.",
+                )
                 if overlap
                 else "No action is needed."
             ),
@@ -1309,7 +1542,13 @@ def evaluate_instant_account_audit(
             standard="A non-brand Search account spending at least 1,000 per month should not have zero negatives.",
             effect="Without a negative system, irrelevant queries can continue consuming budget.",
             next_step=(
-                "Run Skill 3 — Wasted-Spend Finder; review protected brand and converting roots before preparing negatives."
+                specialist_or_manual(
+                    module_id="wasted_spend_finder",
+                    number=3,
+                    name="Wasted-Spend Finder",
+                    specialist_step="Run Skill 3 — Wasted-Spend Finder; review protected brand and converting roots before preparing negatives.",
+                    manual_step="Export the Search terms report, protect confirmed brand and converting roots, classify irrelevant demand, and prepare a reviewed negative-keyword list without applying it.",
+                )
                 if negative_fail
                 else "No urgent action is needed."
             ),
@@ -1335,6 +1574,18 @@ def evaluate_instant_account_audit(
             standard="Product isolation applies only to ecommerce feed campaigns.",
             effect="This criterion is excluded from the grade.",
             next_step="No action is needed.",
+        )
+    elif not performance_trusted:
+        add(
+            "E7",
+            status="unavailable",
+            scope="Shopping/PMax products",
+            evidence="Product rows are available, but their reported outcomes have not been confirmed as genuine purchases.",
+            standard="Product isolation requires trusted purchase and value evidence.",
+            effect="The audit will not label products winners or losers from unverified outcomes.",
+            next_step="Confirm genuine purchase tracking and values, then rerun Skill 1.",
+            evidence_label="Business confirmation needed",
+            recovery_group="outcome_target",
         )
     elif evidence.get("products_verified"):
         products = [dict(item) for item in evidence.get("products") or []]
@@ -1393,18 +1644,57 @@ def evaluate_instant_account_audit(
             for item in campaigns
             if item.get("channel_type") == "PERFORMANCE_MAX"
         )
-        pmax_fail = pmax_share >= 0.20 and not offline
+        pmax_fail = pmax_share >= 0.20 and performance_trusted and not offline
         add(
             "E8",
-            status="fail" if pmax_fail else "pass",
+            status=(
+                "not_applicable"
+                if pmax_share == 0
+                else (
+                    "unavailable"
+                    if not performance_trusted
+                    else ("fail" if pmax_fail else "pass")
+                )
+            ),
             scope="Lead-generation Performance Max",
-            evidence=f"PMax carried {_percent(pmax_share)} of spend; {'an offline quality action exists' if offline else 'no offline/CRM quality action was found'}.",
+            evidence=(
+                "PMax carried no spend in the selected window."
+                if pmax_share == 0
+                else f"PMax carried {_percent(pmax_share)} of spend; "
+                + (
+                    "an offline/imported action is configured, but its customer quality is not confirmed."
+                    if not performance_trusted and offline
+                    else (
+                        "reported outcomes have not been confirmed as genuine leads."
+                        if not performance_trusted
+                        else (
+                            "an offline quality action exists."
+                            if offline
+                            else "no offline/CRM quality action was found."
+                        )
+                    )
+                )
+            ),
             standard="Lead-gen PMax should not scale on shallow form fills without a downstream quality signal.",
             effect="Google may optimise for the cheapest leads rather than qualified enquiries.",
             next_step=(
-                "Connect qualified/won lead imports, make the correct downstream action usable for bidding, then rerun before scaling PMax."
+                "No action is needed while PMax has no spend."
+                if pmax_share == 0
+                else "Confirm which imported/offline actions are genuine qualified or won leads, then rerun before scaling PMax."
+                if not performance_trusted
+                else "Connect qualified/won lead imports, make the correct downstream action usable for bidding, then rerun before scaling PMax."
                 if pmax_fail
                 else "No action is needed."
+            ),
+            evidence_label=(
+                "Business confirmation needed"
+                if pmax_share > 0 and not performance_trusted
+                else "Observed in live Google Ads data"
+            ),
+            recovery_group=(
+                "outcome_target"
+                if pmax_share > 0 and not performance_trusted
+                else None
             ),
         )
 
@@ -1414,7 +1704,20 @@ def evaluate_instant_account_audit(
         for item in campaigns
         if item.get("channel_type") == "SEARCH"
     )
-    if not evidence.get("search_terms_verified"):
+    if not performance_trusted:
+        for check_id in ("F1", "F2", "F3"):
+            add(
+                check_id,
+                status="unavailable",
+                scope="Search terms",
+                evidence="Search-term rows are available, but their reported outcomes have not been confirmed as genuine customers.",
+                standard="Waste and promotion decisions require a trusted business outcome.",
+                effect="The audit will not add negatives or promote queries from unverified conversion counts.",
+                next_step="Confirm which conversion actions represent genuine customers, then rerun Skill 1.",
+                evidence_label="Business confirmation needed",
+                recovery_group="outcome_target",
+            )
+    elif not evidence.get("search_terms_verified"):
         for check_id in ("F1", "F2", "F3"):
             add(
                 check_id,
@@ -1423,7 +1726,7 @@ def evaluate_instant_account_audit(
                 evidence="Search-term performance was unavailable.",
                 standard="The full search-term decision requires query-level clicks, spend, outcomes, and current status.",
                 effect="The check is excluded rather than turning missing rows into a healthy result.",
-                next_step="Restore Search terms report access and rerun Skill 1 or Skill 3.",
+                next_step="Restore Search terms report access and rerun Skill 1.",
                 evidence_label="Needed evidence",
                 recovery_group="search_terms",
             )
@@ -1463,7 +1766,13 @@ def evaluate_instant_account_audit(
             standard="Qualifying zero-outcome terms should remain below 10% of Search spend.",
             effect="Confirmed irrelevant or non-converting demand can consume material budget.",
             next_step=(
-                "Run Skill 3; protect brand and converting roots, then prepare only the reviewed negative actions."
+                specialist_or_manual(
+                    module_id="wasted_spend_finder",
+                    number=3,
+                    name="Wasted-Spend Finder",
+                    specialist_step="Run Skill 3; protect brand and converting roots, then prepare only the reviewed negative actions.",
+                    manual_step="Review every flagged query against protected brand terms and converting roots, classify its intent, and prepare only confirmed irrelevant terms as a draft negative list.",
+                )
                 if not f1_na and waste_share >= 0.10
                 else "No action is needed."
             ),
@@ -1488,7 +1797,13 @@ def evaluate_instant_account_audit(
             standard="At least five of the top 10 spend terms should produce an outcome.",
             effect="When most expensive queries do not convert, intent control is weak.",
             next_step=(
-                "Run Skill 3 to classify the non-converting terms and correct negatives, match control, or landing-page fit."
+                specialist_or_manual(
+                    module_id="wasted_spend_finder",
+                    number=3,
+                    name="Wasted-Spend Finder",
+                    specialist_step="Run Skill 3 to classify the non-converting terms and correct negatives, match control, or landing-page fit.",
+                    manual_step="Review the top 10 terms one by one, classify each as relevant, irrelevant, or landing-page mismatch, and draft the corresponding negative, match-control, or page task.",
+                )
                 if len(top) >= 10 and top_converters < 5
                 else "No action is needed."
             ),
@@ -1507,7 +1822,13 @@ def evaluate_instant_account_audit(
             standard="Proven converting demand should be reviewed for controlled keyword coverage.",
             effect="The account may be leaving a proven query without explicit control.",
             next_step=(
-                "Run Skill 4 — Winning-Keyword Promoter to check close variants, landing-page fit, and promotion eligibility."
+                specialist_or_manual(
+                    module_id="winning_keyword_promoter",
+                    number=4,
+                    name="Winning-Keyword Promoter",
+                    specialist_step="Run Skill 4 — Winning-Keyword Promoter to check close variants, landing-page fit, and promotion eligibility.",
+                    manual_step="Export the eight proven terms, check whether each already has close keyword coverage, confirm landing-page fit and brand safety, then prepare eligible additions as a draft list.",
+                )
                 if backlog
                 else "No action is needed."
             ),
@@ -1565,7 +1886,13 @@ def evaluate_instant_account_audit(
             standard="Every spending Search ad group needs at least one live responsive search ad.",
             effect="A missing live ad can prevent or weaken normal Search delivery.",
             next_step=(
-                "Run Skill 10 — Ad-Copy Analyzer and prepare a compliant RSA for each named ad group."
+                specialist_or_manual(
+                    module_id="ad_copy_analyzer",
+                    number=10,
+                    name="Ad-Copy Analyzer",
+                    specialist_step="Run Skill 10 — Ad-Copy Analyzer and prepare a compliant RSA for each named ad group.",
+                    manual_step="Open each affected ad group, confirm its keyword intent and landing page, then draft one compliant responsive search ad without publishing it.",
+                )
                 if missing_rsa
                 else "No action is needed."
             ),
@@ -1591,7 +1918,13 @@ def evaluate_instant_account_audit(
             standard="Poor ad strength is a refinement flag, not proof of performance failure.",
             effect="The ad may lack message breadth or relevance, but performance evidence still outranks the label.",
             next_step=(
-                "Run Skill 10; compare the offer, keyword intent, landing page, and existing asset performance before editing copy."
+                specialist_or_manual(
+                    module_id="ad_copy_analyzer",
+                    number=10,
+                    name="Ad-Copy Analyzer",
+                    specialist_step="Run Skill 10; compare the offer, keyword intent, landing page, and existing asset performance before editing copy.",
+                    manual_step="Compare each poor-strength ad with its keywords, offer, landing page, and asset performance; draft missing message themes, but do not replace a winning ad based on strength alone.",
+                )
                 if poor_groups
                 else "No action is needed."
             ),
@@ -1638,7 +1971,13 @@ def evaluate_instant_account_audit(
             standard="Weighted Quality Score should be at least 6, with values covering at least half of Search impressions.",
             effect="Low relevance or landing-page experience can reduce auction competitiveness.",
             next_step=(
-                "Run Skill 6 — Quality Score Booster to separate expected CTR, ad relevance, and landing-page causes."
+                specialist_or_manual(
+                    module_id="quality_score_booster",
+                    number=6,
+                    name="Quality Score Booster",
+                    specialist_step="Run Skill 6 — Quality Score Booster to separate expected CTR, ad relevance, and landing-page causes.",
+                    manual_step="Export keyword Quality Score with expected CTR, ad relevance, landing-page experience, impressions, and spend; group the weak keywords by component before proposing a fix.",
+                )
                 if weighted is not None and coverage >= 0.50 and weighted < 6
                 else "No action is needed."
             ),
@@ -1651,7 +1990,7 @@ def evaluate_instant_account_audit(
             evidence="Keyword Quality Score evidence was unavailable.",
             standard="GMA requires score components and impression weights.",
             effect="Quality health is excluded rather than guessed.",
-            next_step="Restore keyword report access and rerun Skill 1 or Skill 6.",
+            next_step="Restore keyword report access and rerun Skill 1.",
             evidence_label="Needed evidence",
             recovery_group="keyword_data",
         )
@@ -1664,6 +2003,19 @@ def evaluate_instant_account_audit(
     ):
         verified = bool(evidence.get(f"{key}_verified"))
         rows = [dict(item) for item in evidence.get(key) or []]
+        if not performance_trusted:
+            add(
+                check_id,
+                status="unavailable",
+                scope=label.title(),
+                evidence=f"{label.title()} performance is available, but the reported outcomes have not been confirmed as genuine customers.",
+                standard=f"GMA needs trusted outcomes by {label} before judging an efficiency gap.",
+                effect="The audit will not recommend exclusions from unverified conversion counts.",
+                next_step="Confirm which conversion actions represent genuine customers, then rerun Skill 1.",
+                evidence_label="Business confirmation needed",
+                recovery_group="outcome_target",
+            )
+            continue
         if not verified:
             add(
                 check_id,
@@ -1919,7 +2271,7 @@ def evaluate_instant_account_audit(
             [
                 "Reconnect Google Ads.",
                 "Confirm Search terms report access for the selected campaigns.",
-                "Rerun Skill 1 or Skill 3.",
+                "Rerun Skill 1.",
             ],
             "Search term, campaign, status, clicks, spend, and outcome rows are returned.",
             "google_ads_admin",
@@ -1972,7 +2324,7 @@ def evaluate_instant_account_audit(
             [
                 "Reconnect Google Ads.",
                 "Confirm keyword report access.",
-                "Rerun Skill 1 or Skill 6.",
+                "Rerun Skill 1.",
             ],
             "Keyword Quality Score and impressions are returned.",
             "google_ads_admin",
@@ -2063,6 +2415,17 @@ def evaluate_instant_account_audit(
             f"{grade['achievable_points']:.0f} achievable points), with a possible "
             "tracking break that must be checked first."
         )
+    elif not performance_trusted:
+        status = "partial"
+        holds = [
+            "Performance-based bid, budget, search-term, and audience decisions are held until genuine customer outcomes are confirmed. Conversion setup fixes and evidence-recovery tasks can proceed now."
+        ]
+        conclusion = (
+            f"Partial audit: grade {grade['band']} ({grade['percentage']:.1f}% of "
+            f"{grade['achievable_points']:.0f} currently achievable points). "
+            f"{len(failures)} configuration checks need action now; "
+            f"{len(unavailable)} checks have a defined evidence-recovery path."
+        )
     elif unavailable:
         status = "partial"
         holds = []
@@ -2097,6 +2460,7 @@ def evaluate_instant_account_audit(
             "unavailable": len(unavailable),
             "not_applicable": len(not_applicable),
             "tracking_circuit_breaker": tracking_suspect,
+            "outcome_quality_circuit_breaker": not performance_trusted,
             "business_mode": business_mode,
         },
         "conclusion": conclusion,

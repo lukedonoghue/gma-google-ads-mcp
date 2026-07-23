@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Callable, Mapping, Sequence
 
@@ -40,6 +40,16 @@ def _value(obj: Any, path: str, default: Any = None) -> Any:
     return current
 
 
+def _change_history_bounds(now: datetime) -> tuple[str, str]:
+    """Return a finite API-safe 30-calendar-date Change Event window."""
+
+    start = now - timedelta(days=29)
+    return (
+        start.strftime("%Y-%m-%d %H:%M:%S"),
+        now.strftime("%Y-%m-%d %H:%M:%S"),
+    )
+
+
 class GoogleAdsInstantAuditGateway(GoogleAdsRedFlagGateway):
     """Build a normalized full-audit snapshot using only server-owned queries."""
 
@@ -57,8 +67,10 @@ class GoogleAdsInstantAuditGateway(GoogleAdsRedFlagGateway):
     ) -> tuple[list[Any], bool]:
         try:
             return self._search(service, customer_id, query), True
-        except Exception as error:
-            gaps.append(f"{gap}: {str(error)[:240]}")
+        except Exception:
+            # Coverage gaps are customer-facing. Keep provider exceptions and
+            # transport details out of the report while still failing closed.
+            gaps.append(gap)
             return [], False
 
     def fetch_snapshot(
@@ -422,12 +434,16 @@ class GoogleAdsInstantAuditGateway(GoogleAdsRedFlagGateway):
             for row in landing_rows
         ]
 
+        change_start_text, change_end_text = _change_history_bounds(
+            self._radar_now_fn()
+        )
         change_rows, changes_ok = self._optional_query(
             service,
             normalized_customer,
             "SELECT change_event.change_date_time, change_event.changed_fields, "
             "campaign.name FROM change_event "
-            "WHERE change_event.change_date_time DURING LAST_30_DAYS "
+            f"WHERE change_event.change_date_time >= '{change_start_text}' "
+            f"AND change_event.change_date_time <= '{change_end_text}' "
             "ORDER BY change_event.change_date_time DESC LIMIT 5000",
             gap="Thirty-day bid/target change history unavailable",
             gaps=gaps,
@@ -555,6 +571,7 @@ class InstantAccountAuditRunService:
         target_roas: float | None = None,
         outcome_quality_confirmed: bool = False,
         brand_terms: Sequence[str] | None = None,
+        available_module_ids: Sequence[str] | None = None,
         analysis_start: str | None = None,
         analysis_end: str | None = None,
         campaign_ids: Sequence[str] | None = None,
@@ -575,6 +592,7 @@ class InstantAccountAuditRunService:
             target_roas=target_roas,
             outcome_quality_confirmed=outcome_quality_confirmed,
             brand_terms=brand_terms,
+            available_module_ids=available_module_ids,
         )
         plan = await self._changesets.create(
             {
