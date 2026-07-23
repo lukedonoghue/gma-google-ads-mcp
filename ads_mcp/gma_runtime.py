@@ -15,6 +15,9 @@ from ads_mcp.changesets import current_identity_owner_id, get_changeset_service
 from ads_mcp.goal_report import build_goal_report as build_goal_report_result
 from ads_mcp.goal_targets import build_goal_context
 from ads_mcp.industry_benchmarks import list_benchmark_profiles
+from ads_mcp.skill_runs.instant_audit_service import (
+    InstantAccountAuditRunService,
+)
 from ads_mcp.skill_runs.budget_service import BudgetReallocatorRunService
 from ads_mcp.skill_runs.common import (
     resolve_analysis_window,
@@ -24,10 +27,11 @@ from ads_mcp.skill_runs.red_flag_service import RedFlagRadarRunService
 
 RUNTIME_VERSION = "1.0.0-alpha.10"
 METHODOLOGY_VERSIONS = {
+    "instant_account_audit": "gma-instant-audit-v1.0.0",
     "red_flag_radar": "gma-red-flag-v1.0.2",
     "budget_reallocator": "gma-budget-v1.0.0",
 }
-EXPECTED_PLUGIN_VERSION = "0.6.2"
+EXPECTED_PLUGIN_VERSION = "0.6.3"
 SCOPE_TTL_SECONDS = 24 * 60 * 60
 RUN_TTL_SECONDS = 90 * 24 * 60 * 60
 WORKSPACE_TTL_SECONDS = 180 * 24 * 60 * 60
@@ -109,9 +113,7 @@ async def get_prepared_scope(
     if not re.fullmatch(r"[a-f0-9]{64}", confirmed_scope_hash or ""):
         raise GmaRuntimeError("A confirmed scope hash is required")
     if value.get("scope_hash") != confirmed_scope_hash:
-        raise GmaRuntimeError(
-            "The confirmed scope does not match the prepared scope"
-        )
+        raise GmaRuntimeError("The confirmed scope does not match the prepared scope")
     return deepcopy(dict(value["scope"]))
 
 
@@ -178,9 +180,7 @@ async def _hydrate_workspace(
                 owner_resolver=owner_resolver,
             )
         except GmaRuntimeError:
-            run_summaries.append(
-                {"run_id": str(run_id), "status": "expired"}
-            )
+            run_summaries.append({"run_id": str(run_id), "status": "expired"})
             continue
         run_summaries.append(
             {
@@ -342,9 +342,7 @@ async def attach_run_to_workspace(
         store=selected_store,
         owner_resolver=owner_resolver,
     )
-    if _workspace_scope_signature(result["scope"]) != payload.get(
-        "scope_signature"
-    ):
+    if _workspace_scope_signature(result["scope"]) != payload.get("scope_signature"):
         raise GmaRuntimeError(
             "This run belongs to a different account, date, campaign, or business scope"
         )
@@ -419,9 +417,7 @@ def _enum(value: Any) -> str:
 
 
 def _core_signature(result: Mapping[str, Any]) -> str:
-    core = {
-        key: value for key, value in result.items() if key != "core_signature"
-    }
+    core = {key: value for key, value in result.items() if key != "core_signature"}
     return hashlib.sha256(
         json.dumps(core, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -484,7 +480,15 @@ def render_run_result(result: Mapping[str, Any]) -> str:
         "|---|---|---|---|",
     ]
     for check in result["checks"]:
-        if module["id"] == "red_flag_radar":
+        if module["id"] == "instant_account_audit":
+            lines.append(
+                f"| {_text(check.get('scope'))} | "
+                f"{_text(check.get('id'))} — {_text(check.get('criterion'))} | "
+                f"{_text(check.get('status')).replace('_', ' ').title()}: "
+                f"{_text(check.get('evidence'))} | "
+                f"{_text(check.get('next_step'))} |"
+            )
+        elif module["id"] == "red_flag_radar":
             lines.append(
                 f"| {_text(check.get('campaign_name'))} | "
                 f"{_text(check.get('criterion'))} | "
@@ -508,9 +512,7 @@ def render_run_result(result: Mapping[str, Any]) -> str:
                 decision = "No budget move"
                 why = _text(check.get("constraint"))
             if routes:
-                why += "; review with " + ", ".join(
-                    _text(item) for item in routes
-                )
+                why += "; review with " + ", ".join(_text(item) for item in routes)
             lines.append(
                 f"| {_text(check.get('campaign_name'))} | "
                 f"Budget eligibility | {decision} | {why} |"
@@ -519,13 +521,10 @@ def render_run_result(result: Mapping[str, Any]) -> str:
     recovery_actions = result.get("recovery_actions") or []
     lines.extend(["", "## Recovery plan", ""])
     if not recovery_actions:
-        lines.append(
-            "No prerequisite or recovery task is required for this run."
-        )
+        lines.append("No prerequisite or recovery task is required for this run.")
     for action in recovery_actions:
         affected = ", ".join(
-            _text(item.get("campaign_name"))
-            for item in action.get("applies_to") or []
+            _text(item.get("campaign_name")) for item in action.get("applies_to") or []
         )
         lines.extend(
             [
@@ -597,9 +596,7 @@ def render_run_result(result: Mapping[str, Any]) -> str:
     if gaps:
         lines.extend(f"- {_text(gap)}" for gap in gaps)
     else:
-        lines.append(
-            "No API coverage gaps were recorded for this selected scope."
-        )
+        lines.append("No API coverage gaps were recorded for this selected scope.")
     change_plan = result.get("change_plan") or {}
     lines.extend(["", "## Next step", ""])
     applyable_ids = change_plan.get("applyable_action_ids") or []
@@ -654,9 +651,7 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
     }
     missing = sorted(required.difference(result))
     if missing:
-        raise GmaRuntimeError(
-            "Runtime result is missing: " + ", ".join(missing)
-        )
+        raise GmaRuntimeError("Runtime result is missing: " + ", ".join(missing))
     unknown = sorted(set(result).difference(required))
     if unknown:
         raise GmaRuntimeError(
@@ -714,9 +709,7 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
         start = date.fromisoformat(str(scope["analysis_start"]))
         end = date.fromisoformat(str(scope["analysis_end"]))
     except ValueError as error:
-        raise GmaRuntimeError(
-            "Runtime scope has invalid analysis dates"
-        ) from error
+        raise GmaRuntimeError("Runtime scope has invalid analysis dates") from error
     if end < start:
         raise GmaRuntimeError("Runtime scope analysis dates are reversed")
     if not isinstance(scope["campaigns"], list) or not scope["campaigns"]:
@@ -762,13 +755,27 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
         or spend_coverage < 0
         or spend_coverage > 100
     ):
-        raise GmaRuntimeError(
-            "Runtime spend coverage must be between 0 and 100"
-        )
+        raise GmaRuntimeError("Runtime spend coverage must be between 0 and 100")
 
     if not isinstance(result["checks"], list) or not result["checks"]:
         raise GmaRuntimeError("Runtime result must contain checks")
-    if module["id"] == "red_flag_radar":
+    if module["id"] == "instant_account_audit":
+        check_fields = {
+            "id",
+            "section_id",
+            "section_name",
+            "criterion",
+            "status",
+            "scope",
+            "evidence",
+            "gma_standard",
+            "decision_effect",
+            "next_step",
+            "source_window",
+            "evidence_label",
+            "recovery_group",
+        }
+    elif module["id"] == "red_flag_radar":
         check_fields = {
             "id",
             "campaign_id",
@@ -808,9 +815,38 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
     for check in result["checks"]:
         if not isinstance(check, Mapping) or set(check) != check_fields:
             raise GmaRuntimeError("Runtime result contains an invalid check")
-        if not re.fullmatch(r"\d{1,20}", str(check["campaign_id"])):
+        if module["id"] != "instant_account_audit" and not re.fullmatch(
+            r"\d{1,20}", str(check["campaign_id"])
+        ):
             raise GmaRuntimeError("Runtime check has an invalid campaign ID")
-        if module["id"] == "red_flag_radar":
+        if module["id"] == "instant_account_audit":
+            if (
+                not re.fullmatch(r"[A-H]\d", str(check["id"]))
+                or check["status"]
+                not in {"pass", "fail", "unavailable", "not_applicable"}
+                or check["section_id"] != str(check["id"])[0]
+            ):
+                raise GmaRuntimeError("Runtime Instant Account Audit check is invalid")
+            for text_field in (
+                "section_name",
+                "criterion",
+                "scope",
+                "evidence",
+                "gma_standard",
+                "decision_effect",
+                "next_step",
+                "source_window",
+                "evidence_label",
+            ):
+                if (
+                    not isinstance(check.get(text_field), str)
+                    or not check[text_field].strip()
+                ):
+                    raise GmaRuntimeError(
+                        f"Runtime Instant Account Audit check {check['id']} "
+                        f"has no {text_field}"
+                    )
+        elif module["id"] == "red_flag_radar":
             if (
                 not re.fullmatch(r"RF-[A-Z]+-\d{1,20}", str(check["id"]))
                 or check["status"]
@@ -826,9 +862,7 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
                 not in {"live_google_ads", "calculated", "unavailable"}
                 or not isinstance(check["metrics"], Mapping)
             ):
-                raise GmaRuntimeError(
-                    "Runtime Red-Flag Radar check is invalid"
-                )
+                raise GmaRuntimeError("Runtime Red-Flag Radar check is invalid")
         else:
             if not isinstance(check["holds"], list) or not isinstance(
                 check["routes"], list
@@ -847,9 +881,13 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
 
     assessment = result["assessment"]
     assessment_detail_field = (
-        "radar_summary"
-        if module["id"] == "red_flag_radar"
-        else "structural_budget_check"
+        "audit_summary"
+        if module["id"] == "instant_account_audit"
+        else (
+            "radar_summary"
+            if module["id"] == "red_flag_radar"
+            else "structural_budget_check"
+        )
     )
     if not isinstance(assessment, Mapping) or set(assessment) != {
         "state",
@@ -886,14 +924,10 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
             not isinstance(recommendation, Mapping)
             or set(recommendation) != recommendation_fields
         ):
-            raise GmaRuntimeError(
-                "Runtime result contains an invalid recommendation"
-            )
+            raise GmaRuntimeError("Runtime result contains an invalid recommendation")
         action_id = str(recommendation.get("id", ""))
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", action_id):
-            raise GmaRuntimeError(
-                "Runtime recommendation has an invalid action ID"
-            )
+            raise GmaRuntimeError("Runtime recommendation has an invalid action ID")
         if recommendation.get("applyability") not in RECOMMENDATION_TYPES:
             raise GmaRuntimeError(
                 f"Runtime recommendation {action_id} has invalid applyability"
@@ -971,14 +1005,10 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
     recovery_ids: list[str] = []
     for recovery in result["recovery_actions"]:
         if not isinstance(recovery, Mapping) or set(recovery) != recovery_fields:
-            raise GmaRuntimeError(
-                "Runtime result contains an invalid recovery action"
-            )
+            raise GmaRuntimeError("Runtime result contains an invalid recovery action")
         recovery_id = str(recovery.get("id", ""))
         if not re.fullmatch(r"REC-[A-Z0-9-]{1,60}", recovery_id):
-            raise GmaRuntimeError(
-                "Runtime recovery action has an invalid action ID"
-            )
+            raise GmaRuntimeError("Runtime recovery action has an invalid action ID")
         if recovery.get("status") not in {
             "ready",
             "waiting",
@@ -1002,7 +1032,9 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
             or not recovery["reason"].strip()
             or not isinstance(recovery.get("steps"), list)
             or not recovery["steps"]
-            or not all(isinstance(step, str) and step.strip() for step in recovery["steps"])
+            or not all(
+                isinstance(step, str) and step.strip() for step in recovery["steps"]
+            )
             or not isinstance(recovery.get("applies_to"), list)
             or not recovery["applies_to"]
             or not isinstance(recovery.get("resolves"), list)
@@ -1058,27 +1090,54 @@ def validate_run_result(result: Mapping[str, Any]) -> None:
     if len(recovery_ids) != len(set(recovery_ids)):
         raise GmaRuntimeError("Runtime recovery action IDs must be unique")
     if (
-        result["status"] in {"blocked", "partial"}
-        or bool(assessment.get("holds"))
+        result["status"] in {"blocked", "partial"} or bool(assessment.get("holds"))
     ) and not result["recovery_actions"]:
         raise GmaRuntimeError(
             "A blocked or partial runtime result must contain a recovery plan"
         )
-    recovery_campaign_ids = {
-        str(entity["campaign_id"])
-        for recovery in result["recovery_actions"]
-        for entity in recovery["applies_to"]
-    }
-    for check in result["checks"]:
-        needs_recovery = (
-            check.get("source") == "unavailable"
-            if module["id"] == "red_flag_radar"
-            else bool(check.get("holds"))
-        )
-        if needs_recovery and str(check["campaign_id"]) not in recovery_campaign_ids:
+    if module["id"] == "instant_account_audit":
+        resolved_check_ids = {
+            str(value)
+            for recovery in result["recovery_actions"]
+            for value in recovery["resolves"]
+        }
+        unavailable_check_ids = {
+            str(check["id"])
+            for check in result["checks"]
+            if check["status"] == "unavailable"
+        }
+        missing_recovery = sorted(unavailable_check_ids.difference(resolved_check_ids))
+        if missing_recovery:
             raise GmaRuntimeError(
-                "Every unavailable or held campaign check must have an actionable recovery task"
+                "Every unavailable audit check must have an actionable recovery task: "
+                + ", ".join(missing_recovery)
             )
+        if (
+            len(result["checks"]) != 41
+            or len({str(check["id"]) for check in result["checks"]}) != 41
+        ):
+            raise GmaRuntimeError(
+                "Instant Account Audit must contain all 41 unique checks"
+            )
+    else:
+        recovery_campaign_ids = {
+            str(entity["campaign_id"])
+            for recovery in result["recovery_actions"]
+            for entity in recovery["applies_to"]
+        }
+        for check in result["checks"]:
+            needs_recovery = (
+                check.get("source") == "unavailable"
+                if module["id"] == "red_flag_radar"
+                else bool(check.get("holds"))
+            )
+            if (
+                needs_recovery
+                and str(check["campaign_id"]) not in recovery_campaign_ids
+            ):
+                raise GmaRuntimeError(
+                    "Every unavailable or held campaign check must have an actionable recovery task"
+                )
     if not isinstance(result["unavailable_evidence"], list):
         raise GmaRuntimeError("Runtime unavailable evidence must be a list")
     if result["unavailable_evidence"] != coverage["gaps"]:
@@ -1139,9 +1198,7 @@ class ScopeGateway:
             "customer.currency_code, customer.time_zone FROM customer LIMIT 1",
         )
         if len(rows) != 1:
-            raise GmaRuntimeError(
-                "The advertiser account could not be resolved"
-            )
+            raise GmaRuntimeError("The advertiser account could not be resolved")
         account = rows[0].customer
         if account.manager:
             raise GmaRuntimeError(
@@ -1186,9 +1243,7 @@ class ScopeGateway:
             f"{campaign_filter} ORDER BY campaign.name LIMIT 500",
         )
         if not inventory_rows:
-            raise GmaRuntimeError(
-                "No campaigns were found in the selected scope"
-            )
+            raise GmaRuntimeError("No campaigns were found in the selected scope")
         inventory_ids = {str(row.campaign.id) for row in inventory_rows}
         missing_selected = sorted(set(selected_ids).difference(inventory_ids))
         if missing_selected:
@@ -1211,8 +1266,7 @@ class ScopeGateway:
             f"{campaign_filter} LIMIT 500",
         )
         spend_by_campaign = {
-            str(row.campaign.id): int(row.metrics.cost_micros)
-            for row in spend_rows
+            str(row.campaign.id): int(row.metrics.cost_micros) for row in spend_rows
         }
         performance_by_campaign = {
             str(row.campaign.id): {
@@ -1336,9 +1390,7 @@ class ScopeGateway:
                     "name": row.campaign.name,
                     "type": _enum(row.campaign.advertising_channel_type),
                     "status": _enum(row.campaign.status),
-                    "spend_micros": spend_by_campaign.get(
-                        str(row.campaign.id), 0
-                    ),
+                    "spend_micros": spend_by_campaign.get(str(row.campaign.id), 0),
                 }
                 for row in campaign_rows
             ],
@@ -1382,8 +1434,7 @@ class AccountGateway:
             customer_service = utils.get_googleads_service("CustomerService")
             response = customer_service.list_accessible_customers()
             root_ids = [
-                value.removeprefix("customers/")
-                for value in response.resource_names
+                value.removeprefix("customers/") for value in response.resource_names
             ]
         if not root_ids:
             raise GmaRuntimeError(
@@ -1397,9 +1448,7 @@ class AccountGateway:
                 service = utils.get_googleads_service(
                     "GoogleAdsService",
                     login_customer_id=(
-                        root_id
-                        if root_id in {access_root, enforced_login}
-                        else None
+                        root_id if root_id in {access_root, enforced_login} else None
                     ),
                 )
                 rows = self._search(
@@ -1489,9 +1538,7 @@ def preflight(host_package_version: str | None = None) -> dict[str, Any]:
                 "number": data[0],
                 "name": data[1],
                 "runtime_status": (
-                    "available"
-                    if module_id in MODULE_HANDLERS
-                    else "not_yet_ported"
+                    "available" if module_id in MODULE_HANDLERS else "not_yet_ported"
                 ),
             }
             for module_id, data in MODULES.items()
@@ -1520,14 +1567,40 @@ async def _run_budget_reallocator(
         business_mode=business_mode,
         target_cpa=inputs.get("target_cpa"),
         target_roas=inputs.get("target_roas"),
-        outcome_quality_confirmed=bool(
-            inputs.get("outcome_quality_confirmed", False)
-        ),
+        outcome_quality_confirmed=bool(inputs.get("outcome_quality_confirmed", False)),
         analysis_start=str(scope["analysis_start"]),
         analysis_end=str(scope["analysis_end"]),
         campaign_ids=[str(item["id"]) for item in scope["campaigns"]],
         monthly_budget=inputs.get("monthly_budget"),
         allow_net_increase=bool(inputs.get("allow_net_increase", False)),
+    )
+
+
+async def _run_instant_account_audit(
+    scope: Mapping[str, Any], inputs: Mapping[str, Any]
+) -> dict[str, Any]:
+    business_mode = str(scope["business_mode"])
+    if business_mode == "hybrid":
+        raise GmaRuntimeError(
+            "Instant Account Audit V1 requires separate ecommerce and lead-gen campaign scopes"
+        )
+    brand_terms = inputs.get("brand_terms")
+    if brand_terms is not None and (
+        not isinstance(brand_terms, list)
+        or not all(isinstance(item, str) for item in brand_terms)
+    ):
+        raise GmaRuntimeError("brand_terms must be a list of confirmed names")
+    return await InstantAccountAuditRunService().run(
+        customer_id=str(scope["customer_id"]),
+        login_customer_id=scope.get("login_customer_id"),
+        business_mode=business_mode,
+        target_cpa=inputs.get("target_cpa"),
+        target_roas=inputs.get("target_roas"),
+        outcome_quality_confirmed=bool(inputs.get("outcome_quality_confirmed", False)),
+        brand_terms=brand_terms,
+        analysis_start=str(scope["analysis_start"]),
+        analysis_end=str(scope["analysis_end"]),
+        campaign_ids=[str(item["id"]) for item in scope["campaigns"]],
     )
 
 
@@ -1545,9 +1618,7 @@ async def _run_red_flag_radar(
         business_mode=business_mode,
         target_cpa=inputs.get("target_cpa"),
         target_roas=inputs.get("target_roas"),
-        outcome_quality_confirmed=bool(
-            inputs.get("outcome_quality_confirmed", False)
-        ),
+        outcome_quality_confirmed=bool(inputs.get("outcome_quality_confirmed", False)),
         analysis_start=str(scope["analysis_start"]),
         analysis_end=str(scope["analysis_end"]),
         campaign_ids=[str(item["id"]) for item in scope["campaigns"]],
@@ -1595,6 +1666,7 @@ async def build_goal_report(
 
 
 MODULE_HANDLERS = {
+    "instant_account_audit": _run_instant_account_audit,
     "red_flag_radar": _run_red_flag_radar,
     "budget_reallocator": _run_budget_reallocator,
 }
@@ -1637,9 +1709,7 @@ async def run_skill(
     }
     missing = sorted(required_scope.difference(scope))
     if missing:
-        raise GmaRuntimeError(
-            "Prepared scope is missing: " + ", ".join(missing)
-        )
+        raise GmaRuntimeError("Prepared scope is missing: " + ", ".join(missing))
     inputs = dict(business_inputs or {})
     business_mode = str(scope["business_mode"])
     raw = await handler(scope, inputs)
@@ -1652,13 +1722,12 @@ async def run_skill(
     else:
         status = "complete"
     recommendations = [dict(action) for action in raw["recommendations"]]
-    checks = [
-        dict(item)
-        for item in raw.get("checks", raw.get("campaign_results", []))
-    ]
-    analyzed_ids = {
-        str(item["campaign_id"]) for item in checks
-    }
+    checks = [dict(item) for item in raw.get("checks", raw.get("campaign_results", []))]
+    analyzed_ids = (
+        {str(item["id"]) for item in scope["campaigns"]}
+        if module_id == "instant_account_audit"
+        else {str(item["campaign_id"]) for item in checks}
+    )
     requested_spend = sum(
         int(item.get("spend_micros") or 0) for item in scope["campaigns"]
     )
@@ -1707,12 +1776,16 @@ async def run_skill(
             "conclusion": raw["conclusion"],
             "holds": raw["holds"],
             (
-                "radar_summary"
-                if module_id == "red_flag_radar"
-                else "structural_budget_check"
+                "audit_summary"
+                if module_id == "instant_account_audit"
+                else (
+                    "radar_summary"
+                    if module_id == "red_flag_radar"
+                    else "structural_budget_check"
+                )
             ): (
                 raw["assessment_details"]
-                if module_id == "red_flag_radar"
+                if module_id in {"instant_account_audit", "red_flag_radar"}
                 else raw["structural_budget_check"]
             ),
         },

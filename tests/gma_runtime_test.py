@@ -118,13 +118,9 @@ class ScopeQueryService:
                         bidding_strategy="",
                         bidding_strategy_type="MAXIMIZE_CONVERSIONS",
                         target_cpa=SimpleNamespace(target_cpa_micros=0),
-                        maximize_conversions=SimpleNamespace(
-                            target_cpa_micros=0
-                        ),
+                        maximize_conversions=SimpleNamespace(target_cpa_micros=0),
                         target_roas=SimpleNamespace(target_roas=0),
-                        maximize_conversion_value=SimpleNamespace(
-                            target_roas=0
-                        ),
+                        maximize_conversion_value=SimpleNamespace(target_roas=0),
                     )
                 ),
                 SimpleNamespace(
@@ -135,16 +131,10 @@ class ScopeQueryService:
                         advertising_channel_type="SEARCH",
                         bidding_strategy="",
                         bidding_strategy_type="TARGET_CPA",
-                        target_cpa=SimpleNamespace(
-                            target_cpa_micros=10_000_000
-                        ),
-                        maximize_conversions=SimpleNamespace(
-                            target_cpa_micros=0
-                        ),
+                        target_cpa=SimpleNamespace(target_cpa_micros=10_000_000),
+                        maximize_conversions=SimpleNamespace(target_cpa_micros=0),
                         target_roas=SimpleNamespace(target_roas=0),
-                        maximize_conversion_value=SimpleNamespace(
-                            target_roas=0
-                        ),
+                        maximize_conversion_value=SimpleNamespace(target_roas=0),
                     )
                 ),
                 SimpleNamespace(
@@ -155,16 +145,10 @@ class ScopeQueryService:
                         advertising_channel_type="SEARCH",
                         bidding_strategy="",
                         bidding_strategy_type="TARGET_CPA",
-                        target_cpa=SimpleNamespace(
-                            target_cpa_micros=50_000_000
-                        ),
-                        maximize_conversions=SimpleNamespace(
-                            target_cpa_micros=0
-                        ),
+                        target_cpa=SimpleNamespace(target_cpa_micros=50_000_000),
+                        maximize_conversions=SimpleNamespace(target_cpa_micros=0),
                         target_roas=SimpleNamespace(target_roas=0),
-                        maximize_conversion_value=SimpleNamespace(
-                            target_roas=0
-                        ),
+                        maximize_conversion_value=SimpleNamespace(target_roas=0),
                     )
                 ),
             ]
@@ -221,9 +205,7 @@ def campaign_check(campaign_id, name, *, recipient=False, donor=False):
         "status": "ENABLED",
         "channel_type": "SEARCH",
         "efficiency": {"status": "profitable", "actual": 40, "target": 50},
-        "constraint": (
-            "budget_limited" if recipient else "not_materially_limited"
-        ),
+        "constraint": ("budget_limited" if recipient else "not_materially_limited"),
         "recipient_eligible": recipient,
         "donor_eligible": donor,
         "holds": [],
@@ -314,9 +296,7 @@ class FakeBlockedBudgetService:
         result["campaign_results"][0]["holds"] = [
             "Outcome quality has not been confirmed"
         ]
-        result["campaign_results"][0]["hold_codes"] = [
-            "OUTCOME_QUALITY_UNCONFIRMED"
-        ]
+        result["campaign_results"][0]["hold_codes"] = ["OUTCOME_QUALITY_UNCONFIRMED"]
         result["recommendations"] = []
         result["holds"] = ["Outcome quality has not been confirmed"]
         result["recovery_actions"] = [
@@ -482,9 +462,7 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [item["customer_id"] for item in result["accounts"]], ["1234567890"]
         )
-        self.assertEqual(
-            result["accounts"][0]["login_customer_id"], "9876543210"
-        )
+        self.assertEqual(result["accounts"][0]["login_customer_id"], "9876543210")
         self.assertFalse(result["selection_required"])
 
     def test_scope_keeps_paused_and_zero_spend_campaigns_and_sorts_on_fixed_30d_spend(
@@ -511,12 +489,8 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ["Enabled Spender", "Paused Spender", "Zero Spend"],
         )
         self.assertEqual(result["scope"]["campaigns"][2]["spend_micros"], 0)
-        self.assertEqual(
-            result["scope"]["campaign_spend_window_start"], "2026-06-22"
-        )
-        self.assertEqual(
-            result["scope"]["campaign_spend_window_end"], "2026-07-21"
-        )
+        self.assertEqual(result["scope"]["campaign_spend_window_start"], "2026-06-22")
+        self.assertEqual(result["scope"]["campaign_spend_window_end"], "2026-07-21")
         suggestion = result["scope"]["goal_context"]["selected_suggestion"]
         self.assertEqual(suggestion["target_cpa_micros"], 50_000_000)
         self.assertEqual(suggestion["campaign_ids"], ["303"])
@@ -552,7 +526,12 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             if module["runtime_status"] == "available"
         ]
         self.assertEqual(
-            available, ["red_flag_radar", "budget_reallocator"]
+            available,
+            [
+                "instant_account_audit",
+                "red_flag_radar",
+                "budget_reallocator",
+            ],
         )
 
     async def test_run_skill_returns_validated_stable_contract(self):
@@ -588,9 +567,7 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             result["run_id"], store=self.store, owner_resolver=self.owner
         )
         self.assertIn("# Skill 12 — Budget Reallocator", rendered["content"])
-        self.assertIn(
-            "Google Ads has **not** been changed", rendered["content"]
-        )
+        self.assertIn("Google Ads has **not** been changed", rendered["content"])
 
     async def test_run_rejects_a_scope_hash_the_user_did_not_confirm(self):
         prepared = await self._save_scope()
@@ -620,9 +597,7 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result["status"], "blocked")
-        self.assertEqual(
-            result["recovery_actions"][0]["id"], "REC-OUTCOME-QUALITY"
-        )
+        self.assertEqual(result["recovery_actions"][0]["id"], "REC-OUTCOME-QUALITY")
         rendered = await render_run(
             result["run_id"], store=self.store, owner_resolver=self.owner
         )
@@ -669,9 +644,7 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             store=self.store,
             owner_resolver=self.owner,
         )
-        self.assertEqual(
-            selected["selected_action_ids"], ["REC-OUTCOME-QUALITY"]
-        )
+        self.assertEqual(selected["selected_action_ids"], ["REC-OUTCOME-QUALITY"])
         self.assertEqual(selected["action_list"][0]["kind"], "recovery_task")
         reopened = await get_workspace(
             workspace["workspace_id"],
@@ -765,11 +738,11 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["module"]["number"], 2)
         self.assertEqual(result["status"], "complete")
-        self.assertEqual(result["checks"][0]["criterion"], "Active ad policy eligibility")
-        self.assertEqual(result["recommendations"][0]["applyability"], "task")
         self.assertEqual(
-            result["assessment"]["radar_summary"]["criteria_checked"], 2
+            result["checks"][0]["criterion"], "Active ad policy eligibility"
         )
+        self.assertEqual(result["recommendations"][0]["applyability"], "task")
+        self.assertEqual(result["assessment"]["radar_summary"]["criteria_checked"], 2)
         rendered = await render_run(
             result["run_id"],
             store=self.store,
@@ -782,7 +755,9 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             rendered["content"],
         )
 
-    async def test_runtime_rejects_dead_end_recommendations_and_unavailable_checks(self):
+    async def test_runtime_rejects_dead_end_recommendations_and_unavailable_checks(
+        self,
+    ):
         prepared = await self._save_scope()
         with patch(
             "ads_mcp.gma_runtime.RedFlagRadarRunService",
@@ -843,9 +818,7 @@ class GmaRuntimeTest(unittest.IsolatedAsyncioTestCase):
             store=self.store,
             owner_resolver=self.owner,
         )
-        with self.assertRaisesRegex(
-            GmaRuntimeError, "separate ecommerce and lead-gen"
-        ):
+        with self.assertRaisesRegex(GmaRuntimeError, "separate ecommerce and lead-gen"):
             await run_skill(
                 module_id="budget_reallocator",
                 scope_id=f"scope_{scope_hash[:24]}",
