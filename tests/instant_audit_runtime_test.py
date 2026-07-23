@@ -115,6 +115,7 @@ class InstantAuditRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("# Skill 1 — Instant Account Audit", rendered["content"])
         self.assertIn("A1 — Auto-tagging is enabled", rendered["content"])
         self.assertIn("REC-IA-OUTCOME", rendered["content"])
+        self.assertIn("### Safety hold", rendered["content"])
         self.assertIn("Google Ads has **not** been changed", rendered["content"])
 
 

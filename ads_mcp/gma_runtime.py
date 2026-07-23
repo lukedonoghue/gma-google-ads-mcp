@@ -25,9 +25,9 @@ from ads_mcp.skill_runs.common import (
 )
 from ads_mcp.skill_runs.red_flag_service import RedFlagRadarRunService
 
-RUNTIME_VERSION = "1.0.0-alpha.11"
+RUNTIME_VERSION = "1.0.0-alpha.12"
 METHODOLOGY_VERSIONS = {
-    "instant_account_audit": "gma-instant-audit-v1.0.1",
+    "instant_account_audit": "gma-instant-audit-v1.0.2",
     "red_flag_radar": "gma-red-flag-v1.0.2",
     "budget_reallocator": "gma-budget-v1.0.0",
 }
@@ -479,6 +479,15 @@ def render_run_result(result: Mapping[str, Any]) -> str:
         "| Campaign | Check | Result | What to do next |",
         "|---|---|---|---|",
     ]
+    holds = assessment.get("holds") or []
+    if holds:
+        checked_index = lines.index("## What the skill checked")
+        lines[checked_index:checked_index] = [
+            "### Safety hold",
+            "",
+            *[f"- {_text(hold)}" for hold in holds],
+            "",
+        ]
     for check in result["checks"]:
         if module["id"] == "instant_account_audit":
             lines.append(

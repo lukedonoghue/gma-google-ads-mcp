@@ -302,6 +302,15 @@ class InstantAccountAuditTest(unittest.TestCase):
         self.assertIn("Do this now:", checks["G4"]["next_step"])
         self.assertNotIn("Run Skill 4", checks["F3"]["next_step"])
         self.assertNotIn("Run Skill 6", checks["G4"]["next_step"])
+        quality_action = next(
+            action
+            for action in result["recommendations"]
+            if action["estimate"]["check_id"] == "G4"
+        )
+        self.assertEqual(
+            quality_action["entity"],
+            "Diagnose low Quality Score by component",
+        )
 
     def test_optional_query_hides_provider_error_from_customer_gap(self):
         gateway = GoogleAdsInstantAuditGateway()
