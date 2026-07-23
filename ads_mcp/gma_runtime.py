@@ -24,16 +24,20 @@ from ads_mcp.skill_runs.common import (
     trailing_complete_days,
 )
 from ads_mcp.skill_runs.red_flag_service import RedFlagRadarRunService
+from ads_mcp.skill_runs.quality_score_service import (
+    QualityScoreBoosterRunService,
+)
 from ads_mcp.skill_runs.wasted_spend_service import WastedSpendFinderRunService
 
-RUNTIME_VERSION = "1.0.0-alpha.15"
+RUNTIME_VERSION = "1.0.0-alpha.16"
 METHODOLOGY_VERSIONS = {
     "instant_account_audit": "gma-instant-audit-v1.0.2",
     "red_flag_radar": "gma-red-flag-v1.0.2",
     "wasted_spend_finder": "gma-wasted-spend-v1.0.0",
+    "quality_score_booster": "gma-quality-score-v1.0.0",
     "budget_reallocator": "gma-budget-v1.0.0",
 }
-EXPECTED_PLUGIN_VERSION = "0.6.4"
+EXPECTED_PLUGIN_VERSION = "0.6.5"
 SCOPE_TTL_SECONDS = 24 * 60 * 60
 RUN_TTL_SECONDS = 90 * 24 * 60 * 60
 WORKSPACE_TTL_SECONDS = 180 * 24 * 60 * 60
